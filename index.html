@@ -168,10 +168,10 @@ function getStores(code) {
   ];
 }
 
-const SCRIPT_URL = 'https://script.google.com/a/macros/thepurestgroup.com/s/AKfycbyoteTmgw4AVfDBL2LMm1NF1ng5tZYlR_QctynkWbOCg-FxDLjkfAdPkx1cKAtIWZsB6w/exec';
-const DEMO_MODE  = SCRIPT_URL === 'https://script.google.com/a/macros/thepurestgroup.com/s/AKfycbyoteTmgw4AVfDBL2LMm1NF1ng5tZYlR_QctynkWbOCg-FxDLjkfAdPkx1cKAtIWZsB6w/exec';
+// ─── CONFIG ── paste your Apps Script Web App URL here ───────
+const SCRIPT_URL = 'YOUR_APPS_SCRIPT_URL_HERE';
+const DEMO_MODE  = SCRIPT_URL === 'YOUR_APPS_SCRIPT_URL_HERE'; // auto-detects demo
 const URGENT_N = 3;
-const S = {user:null, formData:{}, submissions:{}};
 const root = () => document.getElementById('root');
 
 // ── COMBO WIDGET ──────────────────────────────────────────────
@@ -251,7 +251,8 @@ function detectUrgent(orders) {
 }
 
 // ── DASHBOARD ────────────────────────────────────────────────
-function renderDashboard() {
+async function renderDashboard() {
+  if (!DEMO_MODE) await loadSubmissions();
   const u=S.user;
   const allOrders=Object.values(S.submissions).flat();
   const urgent=detectUrgent(allOrders);
@@ -289,6 +290,8 @@ function renderDashboard() {
       ${pendingCnt>0?`<div class="pending-banner">⏳ ${pendingCnt} section${pendingCnt>1?'s':''} still pending submission</div>`:''}
       <div class="flex gap2 items-c" style="margin-bottom:1.5rem;flex-wrap:wrap;">
         <button class="btn btn-pdf" onclick="generatePDF()" ${Object.keys(S.submissions).length===0?'disabled':''}>Download PDF</button>
+        <button class="btn btn-ghost btn-sm" onclick="renderDashboard()">Refresh</button>
+        ${DEMO_MODE?`<span class="muted" style="font-size:11px;">Demo mode — connect Apps Script to go live</span>`:''}
         ${pendingCnt>0&&Object.keys(S.submissions).length>0?`<span class="muted" style="font-size:11px;">PDF includes submitted sections only</span>`:''}
       </div>
       ${allOrders.length>0?renderPreview(allOrders):`<div class="alert alert-info">No submissions yet. Click a country above to start.</div>`}
@@ -415,7 +418,45 @@ function addOrder(code,sec){const ctry=COUNTRIES.find(c=>c.code===code);S.formDa
 function delOrder(code,sec,idx){S.formData[code][sec].splice(idx,1);if(!S.formData[code][sec].length){const ctry=COUNTRIES.find(c=>c.code===code);S.formData[code][sec].push(mkEmpty(sec,code,ctry.store));}renderForm(code);}
 function addBlog(code){S.formData[code].backlogs.push({destination:code,store:'',date:'',count:'',remarks:''});renderForm(code);}
 function delBlog(code,idx){S.formData[code].backlogs.splice(idx,1);if(!S.formData[code].backlogs.length)S.formData[code].backlogs.push({destination:code,store:'',date:'',count:'',remarks:''});renderForm(code);}
-function submitSection(code){const fd=S.formData[code];S.submissions[code]=[...fd.pending,...fd.transit,...fd.hold].filter(o=>o.trackingId.trim());renderDashboard();}
+async function submitSection(code) {
+  const fd = S.formData[code];
+  const orders = [...fd.pending,...fd.transit,...fd.hold].filter(o=>o.trackingId.trim());
+
+  if (!DEMO_MODE) {
+    const btn = document.querySelector(`button[onclick="submitSection('${code}')"]`);
+    if (btn) { btn.disabled=true; btn.textContent='Submitting...'; }
+    try {
+      await fetch(SCRIPT_URL, {
+        method:'POST',
+        body: JSON.stringify({
+          action:'submit', date:TODAY, country:code,
+          preparedBy:fd.preparedBy, orders, backlogs:fd.backlogs.filter(b=>b.count!=='')
+        })
+      });
+    } catch(e) { alert('Submission failed: '+e.message); return; }
+  }
+
+  S.submissions[code] = orders;
+  renderDashboard();
+}
+
+async function loadSubmissions() {
+  if (DEMO_MODE) return;
+  try {
+    const res  = await fetch(`${SCRIPT_URL}?date=${encodeURIComponent(TODAY)}`);
+    const data = await res.json();
+    if (data.submissions) {
+      S.submissions = data.submissions;
+      // Restore formData names from loaded submissions so "By" column shows correctly
+      Object.entries(data.submissions).forEach(([code, orders]) => {
+        if (!S.formData[code]) S.formData[code] = {preparedBy:'', pending:[], transit:[], hold:[], backlogs:[]};
+        ['pending','transit','hold'].forEach(sec => {
+          S.formData[code][sec] = orders.filter(o=>o.section===sec);
+        });
+      });
+    }
+  } catch(e) { console.warn('Could not load submissions:', e); }
+}
 
 // ── SETTINGS ─────────────────────────────────────────────────
 const SETTING_DEFS = [
@@ -722,6 +763,25 @@ function generatePDF(){
   }
 
   doc.save(`Logistics-Report-${TODAY.replace(/\//g,'-')}.pdf`);
+
+  // Log PDF generation to Google Sheets
+  if (!DEMO_MODE) {
+    const sectionsIncluded = Object.keys(S.submissions).map(code => {
+      const c = COUNTRIES.find(c=>c.code===code);
+      return c ? c.label : code;
+    });
+    fetch(SCRIPT_URL, {
+      method:'POST',
+      body: JSON.stringify({
+        action:           'log_pdf',
+        date:             TODAY,
+        timestamp:        new Date().toLocaleString(),
+        generatedBy:      S.user.name,
+        sectionsIncluded,
+        totalOrders:      Object.values(S.submissions).flat().length,
+      })
+    }).catch(e => console.warn('PDF log failed:', e));
+  }
 }
 
 renderLogin();
