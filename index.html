@@ -251,9 +251,15 @@ function detectUrgent(orders) {
 }
 
 // ── DASHBOARD ────────────────────────────────────────────────
-async function renderDashboard() {
-  if (!DEMO_MODE) await loadSubmissions();
+function renderDashboard() {
   const u=S.user;
+  _drawDashboard(u);
+  if (!DEMO_MODE) {
+    loadSubmissions().then(()=>_drawDashboard(S.user)).catch(()=>{});
+  }
+}
+
+function _drawDashboard(u) {
   const allOrders=Object.values(S.submissions).flat();
   const urgent=detectUrgent(allOrders);
   const submitted=Object.keys(S.submissions);
