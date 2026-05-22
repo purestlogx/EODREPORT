@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Daily Logistics Report · Purest Nest</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+<style>
+:root{--bg:#FDF8F2;--teal:#004C4F;--teal-lt:rgba(0,76,79,0.07);--moss:#375428;--border:rgba(0,76,79,0.13);--r:14px;--r-sm:8px;--danger:#B91C1C;--danger-bg:#FEE2E2;--warn:#B45309;--warn-bg:#FEF3C7;--ok:#166534;--ok-bg:#DCFCE7;--shadow:0 2px 12px rgba(43,41,37,0.09);}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);font-family:'DM Sans',system-ui,sans-serif;color:var(--teal);min-height:100vh;font-size:14px;}
+nav{background:var(--teal);padding:0 1.5rem;height:52px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;}
+.brand{font-size:16px;font-weight:600;color:#FDF8F2;}
+.nav-right{display:flex;align-items:center;gap:10px;}
+.nav-user{font-size:12px;color:rgba(253,248,242,0.85);display:flex;align-items:center;gap:6px;}
+.nav-badge{background:rgba(255,255,255,0.15);padding:2px 8px;border-radius:20px;font-size:11px;}
+.nav-meta{font-size:11px;color:rgba(253,248,242,0.5);}
+.btn-nav{background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);color:#FDF8F2;padding:4px 10px;border-radius:var(--r-sm);font-size:11px;font-weight:500;cursor:pointer;font-family:inherit;}
+.btn-nav:hover{background:rgba(255,255,255,0.2);}
+.wrap{max-width:900px;margin:0 auto;padding:1.5rem 1rem;}
+.card{background:#fff;border:1px solid var(--border);border-radius:var(--r);padding:1.25rem;margin-bottom:1rem;box-shadow:var(--shadow);}
+h1{font-size:24px;font-weight:600;margin-bottom:4px;}
+h2{font-size:20px;font-weight:600;}
+h3{font-size:16px;font-weight:600;}
+/* LOGIN */
+.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;}
+.login-card{background:#fff;border:1px solid var(--border);border-radius:var(--r);padding:2.5rem 2rem;width:100%;max-width:380px;box-shadow:var(--shadow);}
+.login-logo{text-align:center;margin-bottom:1.75rem;}
+.login-logo .brand-lg{font-size:22px;font-weight:700;color:var(--teal);}
+.login-logo .sub{font-size:12px;color:rgba(0,76,79,.5);margin-top:4px;}
+.login-hint{background:var(--teal-lt);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 12px;font-size:12px;margin-bottom:1.25rem;}
+.login-hint b{display:block;margin-bottom:6px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;}
+.login-hint table{width:100%;border-collapse:collapse;}
+.login-hint td{padding:2px 6px;font-family:monospace;font-size:11px;}
+.login-hint td:first-child{font-weight:600;width:80px;}
+.error-msg{background:var(--danger-bg);color:var(--danger);border-radius:var(--r-sm);padding:8px 12px;font-size:13px;margin-bottom:1rem;}
+.form-group{margin-bottom:1rem;}
+.form-label{font-size:11px;font-weight:600;color:var(--teal);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px;display:block;}
+.form-input{width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:var(--r-sm);font-family:inherit;font-size:13px;color:var(--teal);background:#fff;outline:none;transition:border .15s;}
+.form-input:focus{border-color:var(--teal);}
+/* DASHBOARD */
+.status-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:1.25rem;}
+.sc{background:#fff;border:1.5px solid var(--border);border-radius:var(--r);padding:1rem;text-align:center;cursor:pointer;transition:all .18s;box-shadow:var(--shadow);}
+.sc:hover{transform:translateY(-3px);box-shadow:0 6px 18px rgba(0,76,79,0.14);border-color:var(--teal);}
+.sc .sc-dot{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;margin:0 auto 8px;}
+.sc .sc-label{font-size:13px;font-weight:600;margin-bottom:4px;}
+.sc .sc-store{font-size:10px;color:rgba(0,76,79,.4);margin-bottom:6px;}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:3px;}
+.dot-done{background:#16a34a;}.dot-pend{background:#d97706;}
+.slabel{font-size:11px;margin-top:2px;}
+.click-hint{font-size:10px;color:rgba(0,76,79,.3);margin-top:4px;}
+/* BUTTONS */
+.btn{display:inline-flex;align-items:center;gap:5px;padding:8px 16px;border-radius:var(--r-sm);font-family:inherit;font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;cursor:pointer;border:none;transition:all .15s;}
+.btn-primary{background:var(--teal);color:#FDF8F2;}.btn-primary:hover{background:var(--moss);}
+.btn-ghost{background:transparent;border:1px solid var(--border);color:var(--teal);}.btn-ghost:hover{background:var(--teal-lt);}
+.btn-pdf{background:var(--moss);color:#fff;}.btn-pdf:hover{opacity:.9;}
+.btn-pdf:disabled{opacity:.35;cursor:not-allowed;}
+.btn-sm{padding:4px 10px;font-size:11px;}
+.btn-del{background:var(--danger-bg);color:var(--danger);border:1px solid rgba(185,28,28,0.18);padding:3px 7px;font-size:11px;border-radius:4px;cursor:pointer;}
+.btn-full{width:100%;justify-content:center;padding:10px;}
+.btn-icon{background:transparent;border:1px solid var(--border);color:var(--teal);padding:5px 9px;border-radius:var(--r-sm);cursor:pointer;font-size:13px;}
+.btn-icon:hover{background:var(--teal-lt);}
+/* ALERTS */
+.alert{padding:10px 14px;border-radius:var(--r-sm);font-size:13px;margin-bottom:1rem;}
+.alert-info{background:var(--teal-lt);border:1px solid var(--border);}
+.alert-ok{background:var(--ok-bg);color:var(--ok);border:1px solid rgba(22,101,52,.15);}
+.urgent-box{background:var(--danger-bg);border:1px solid rgba(185,28,28,.2);border-radius:var(--r-sm);padding:.85rem 1rem;margin-bottom:1rem;}
+.urgent-title{font-size:13px;font-weight:600;color:var(--danger);margin-bottom:7px;}
+.urgent-item{font-size:12px;color:#7f1d1d;padding:5px 0;border-bottom:1px solid rgba(185,28,28,.1);line-height:1.5;}
+.urgent-item:last-child{border-bottom:none;}
+.pending-banner{background:var(--warn-bg);border:1px solid rgba(180,83,9,.2);border-radius:var(--r-sm);padding:8px 12px;font-size:13px;color:var(--warn);margin-bottom:1rem;}
+/* FORM */
+.sec-hdr{background:var(--teal);color:#FDF8F2;border-radius:var(--r-sm);padding:8px 12px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;}
+.sec-note{font-size:10px;opacity:.65;font-weight:400;text-transform:none;letter-spacing:0;}
+select,input[type=text],input[type=number]{padding:6px 9px;border:1px solid var(--border);border-radius:var(--r-sm);font-family:inherit;font-size:12px;color:var(--teal);background:#fff;outline:none;transition:border .15s;}
+select:focus,input:focus{border-color:var(--teal);}
+.otbl{width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:6px;}
+.otbl th{background:rgba(0,76,79,0.07);color:var(--teal);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;padding:5px 6px;border:1px solid var(--border);white-space:nowrap;}
+.otbl td{padding:2px 2px;border:1px solid var(--border);vertical-align:middle;}
+.otbl td input,.otbl td select{padding:4px 5px;font-size:11.5px;border:none;background:transparent;width:100%;}
+.otbl td input:focus,.otbl td select:focus{background:var(--teal-lt);border-radius:3px;outline:none;}
+.row-urgent td{background:#FEF3C7!important;}
+.combo-wrap{display:flex;gap:3px;align-items:center;width:100%;}
+.combo-wrap select{flex:1;}
+.combo-wrap input.combo-text{flex:1;min-width:0;padding:4px 5px;font-size:11.5px;border:1px solid var(--border);border-radius:3px;background:#fff;color:var(--teal);}
+.badge{display:inline-block;font-size:10px;font-weight:600;padding:2px 6px;border-radius:20px;}
+.badge-urg{background:var(--danger-bg);color:var(--danger);}
+.divider{border:none;border-top:1px solid var(--border);margin:1rem 0;}
+.flex{display:flex;}.gap2{gap:8px;}.items-c{align-items:center;}
+.muted{color:rgba(0,76,79,.45);font-size:12px;}
+.mt1{margin-top:6px;}
+/* USER MGMT */
+.um-table{width:100%;border-collapse:collapse;font-size:13px;}
+.um-table th{text-align:left;padding:8px 12px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--teal);background:rgba(0,76,79,.06);border-bottom:1px solid var(--border);}
+.um-table td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle;}
+.um-table tr:last-child td{border-bottom:none;}
+.role-pill{display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;}
+.role-manager{background:#1a1a2e;color:#fff;}
+.role-pic{background:var(--teal-lt);color:var(--teal);border:1px solid var(--border);}
+/* SETTINGS */
+.settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;}
+.setting-card{background:#fff;border:1px solid var(--border);border-radius:var(--r);padding:1.25rem;box-shadow:var(--shadow);}
+.setting-card h3{font-size:13px;font-weight:600;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;}
+.tag-list{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;min-height:32px;}
+.tag{display:inline-flex;align-items:center;gap:4px;background:var(--teal-lt);border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:12px;}
+.tag button{background:none;border:none;cursor:pointer;color:rgba(0,76,79,.4);font-size:13px;line-height:1;padding:0;}
+.tag button:hover{color:var(--danger);}
+.add-tag-row{display:flex;gap:6px;}
+.add-tag-row input{flex:1;padding:5px 9px;font-size:12px;}
+/* MODAL */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:200;display:flex;align-items:center;justify-content:center;}
+.modal{background:#fff;border-radius:var(--r);padding:1.75rem;width:100%;max-width:420px;box-shadow:0 8px 32px rgba(0,0,0,0.18);}
+.modal h3{font-size:17px;font-weight:600;margin-bottom:1.25rem;}
+.modal-footer{display:flex;gap:8px;justify-content:flex-end;margin-top:1.25rem;}
+</style>
+</head>
+<body>
+<nav>
+  <span class="brand">Purest Nest &nbsp;·&nbsp; Logistics Report</span>
+  <div class="nav-right">
+    <span class="nav-meta" id="nav-date"></span>
+    <div class="nav-user" id="nav-user" style="display:none;">
+      <span id="nav-username"></span>
+      <span class="nav-badge" id="nav-role"></span>
+      <button class="btn-nav" id="btn-settings" onclick="renderSettings()">⚙ Settings</button>
+      <button class="btn-nav" onclick="logout()">Log out</button>
+    </div>
+  </div>
+</nav>
+<div id="root"></div>
+
+<script>
+const TODAY = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'numeric'});
+document.getElementById('nav-date').textContent = TODAY;
+
+const COUNTRIES = [
+  {code:'MY', label:'Malaysia',     store:'Shopify MY', threshold:5,  color:'#cc0001'},
+  {code:'PH', label:'Philippines',  store:'Shopify PH', threshold:10, color:'#0038a8'},
+  {code:'AU', label:'Australia',    store:'Shopify AU', threshold:10, color:'#00008b'},
+  {code:'US', label:'United States',store:'Shopify US', threshold:10, color:'#b22234'},
+];
+
+let ACCOUNTS = [
+  {username:'rose',  password:'rose123',  name:'Rose',  role:'pic'},
+  {username:'gen',   password:'gen123',   name:'Gen',   role:'pic'},
+  {username:'jay',   password:'jay123',   name:'Jay',   role:'pic'},
+  {username:'sam',   password:'sam123',   name:'Sam',   role:'pic'},
+  {username:'admin', password:'admin123', name:'Admin', role:'manager'},
+];
+
+// ── SETTINGS (all editable dropdown lists) ───────────────────
+let SETTINGS = {
+  platforms: ['Shopify', 'Shopee', 'Lazada', 'TikTok'],
+  actions:   ['Chased courier','Awaiting courier reply','Awaiting 3PL feedback','Reship done','Pending pick up','LIT - investigating'],
+  statuses:  ['Pending','Delivered','In Transit'],
+  puStatuses:['Pending','Handed Over'],
+  types:     ['On Hold','RTS'],
+  reasons:   ['CX not answering','Wrong address','CX requested reschedule','Failed delivery attempts','Damaged parcel','Return to sender'],
+  shipTo:    ['MY','PH','AU','US'],
+};
+
+// Generate store list for a given country code
+function getStores(code) {
+  return [
+    'Shopify SG',
+    ...SETTINGS.platforms.map(p => `${p} ${code}`)
+  ];
+}
+
+const URGENT_N = 3;
+const S = {user:null, formData:{}, submissions:{}};
+const root = () => document.getElementById('root');
+
+// ── COMBO WIDGET ──────────────────────────────────────────────
+const CB = {}; let cbIdx = 0;
+function combo(arr, val, fn) {
+  const id='cb_'+(cbIdx++); CB[id]=fn;
+  const isOther = val && !arr.includes(val);
+  const selVal  = isOther ? '__other__' : (val||'');
+  return `<div class="combo-wrap">
+    <select data-cb="${id}" onchange="comboChange(this)">
+      <option value="">Select…</option>
+      ${arr.map(v=>`<option value="${v}"${v===selVal?' selected':''}>${v}</option>`).join('')}
+      <option value="__other__"${isOther?' selected':''}>Other…</option>
+    </select>
+    <input class="combo-text" type="text" placeholder="Type here…" value="${isOther?val:''}"
+      data-cb="${id}" style="display:${isOther?'block':'none'};" oninput="comboText(this)">
+  </div>`;
+}
+function comboChange(sel) {
+  const wrap=sel.parentElement, inp=wrap.querySelector('input.combo-text'), fn=CB[sel.dataset.cb];
+  if (sel.value==='__other__') { inp.style.display='block'; inp.focus(); }
+  else { inp.style.display='none'; inp.value=''; if(fn) fn(sel.value); }
+}
+function comboText(inp) { const fn=CB[inp.dataset.cb]; if(fn) fn(inp.value); }
+
+// ── AUTH ──────────────────────────────────────────────────────
+function renderLogin(err='') {
+  root().innerHTML=`
+    <div class="login-wrap">
+      <div class="login-card">
+        <div class="login-logo">
+          <div class="brand-lg">📦 Purest Nest</div>
+          <div class="sub">Daily Logistics Report</div>
+        </div>
+        ${err?`<div class="error-msg">${err}</div>`:''}
+        <div class="form-group">
+          <label class="form-label">Username</label>
+          <input class="form-input" type="text" id="lu" placeholder="Username" autofocus onkeydown="if(event.key==='Enter')doLogin()">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input class="form-input" type="password" id="lp" placeholder="Password" onkeydown="if(event.key==='Enter')doLogin()">
+        </div>
+        <button class="btn btn-primary btn-full" onclick="doLogin()">Log in</button>
+      </div>
+    </div>`;
+}
+function doLogin() {
+  const u=document.getElementById('lu').value.trim().toLowerCase();
+  const p=document.getElementById('lp').value;
+  const acct=ACCOUNTS.find(a=>a.username===u&&a.password===p);
+  if (!acct) { renderLogin('Incorrect username or password.'); return; }
+  S.user=acct;
+  document.getElementById('nav-user').style.display='flex';
+  document.getElementById('nav-username').textContent=acct.name;
+  document.getElementById('nav-role').textContent=acct.role==='manager'?'Manager':'PIC';
+  document.getElementById('btn-settings').style.display='';
+  renderDashboard();
+}
+function logout() {
+  S.user=null;
+  document.getElementById('nav-user').style.display='none';
+  renderLogin();
+}
+
+// ── URGENT ────────────────────────────────────────────────────
+function detectUrgent(orders) {
+  const flags=new Map();
+  const add=(o,reason)=>{const k=o.trackingId||JSON.stringify(o);if(!flags.has(k))flags.set(k,{order:o,reasons:[]});if(!flags.get(k).reasons.includes(reason))flags.get(k).reasons.push(reason);};
+  orders.forEach(o=>{const c=COUNTRIES.find(c=>c.code===o.shipTo);if(o.days&&parseInt(o.days)>(c?c.threshold:10))add(o,`Delayed ${o.days}d (>${c?c.threshold:10}d for ${o.shipTo})`);});
+  const byCA={};orders.forEach(o=>{if(!o.action||o.action==='—')return;const k=`${o.shipTo}||${o.action}`;(byCA[k]=byCA[k]||[]).push(o);});
+  Object.entries(byCA).forEach(([k,ords])=>{if(ords.length>=URGENT_N){const[c,a]=k.split('||');ords.forEach(o=>add(o,`${ords.length}x "${a}" in ${c}`));}});
+  const byA={};orders.forEach(o=>{if(!o.action||o.action==='—')return;(byA[o.action]=byA[o.action]||[]).push(o);});
+  Object.entries(byA).forEach(([a,ords])=>{if(ords.length>=URGENT_N)ords.forEach(o=>add(o,`${ords.length}x "${a}" globally`));});
+  orders.forEach(o=>{if(o.urgent)add(o,'Manually flagged');});
+  return [...flags.values()];
+}
+
+// ── DASHBOARD ────────────────────────────────────────────────
+function renderDashboard() {
+  const u=S.user;
+  const allOrders=Object.values(S.submissions).flat();
+  const urgent=detectUrgent(allOrders);
+  const submitted=Object.keys(S.submissions);
+  const pendingCnt=COUNTRIES.length-submitted.length;
+
+  root().innerHTML=`
+    <div class="wrap">
+      <div style="margin-bottom:1.25rem;">
+        <h1>EOD Logistics Report</h1>
+        <p class="muted">${TODAY} &nbsp;·&nbsp; Welcome back, <strong>${u.name}</strong> &nbsp;·&nbsp; Click a country to fill</p>
+      </div>
+      <div class="status-grid">
+        ${COUNTRIES.map(c=>{
+          const done=submitted.includes(c.code);
+          return`<div class="sc" onclick="selectCountry('${c.code}')">
+            <div class="sc-dot" style="background:${c.color};">${c.code}</div>
+            <div class="sc-label">${c.label}</div>
+            <div class="sc-store">${c.store}</div>
+            <span class="dot ${done?'dot-done':'dot-pend'}"></span>
+            <div class="slabel" style="color:${done?'#16a34a':'#d97706'}">${done?'✓ Submitted':'Pending'}</div>
+          </div>`;
+        }).join('')}
+      </div>
+      ${urgent.length>0?`
+        <div class="urgent-box">
+          <div class="urgent-title">⚠ Urgent Issues Detected (${urgent.length})</div>
+          ${urgent.map(u=>`<div class="urgent-item">
+            <strong>${u.order.trackingId||'—'}</strong>${u.order.orderId?` · ${u.order.orderId}`:''}
+            <span class="muted"> · ${u.order.shipTo||''}</span>
+            ${u.order.urgent?'<span class="badge badge-urg" style="margin-left:5px;">Manual</span>':''}
+            <br><span style="font-size:11px;color:#991b1b;">${u.reasons.join(' | ')}</span>
+          </div>`).join('')}
+        </div>`:allOrders.length>0?`<div class="alert alert-ok">✓ No urgent issues detected</div>`:''}
+      ${pendingCnt>0?`<div class="pending-banner">⏳ ${pendingCnt} section${pendingCnt>1?'s':''} still pending submission</div>`:''}
+      <div class="flex gap2 items-c" style="margin-bottom:1.5rem;flex-wrap:wrap;">
+        <button class="btn btn-pdf" onclick="generatePDF()" ${Object.keys(S.submissions).length===0?'disabled':''}>Download PDF</button>
+        ${pendingCnt>0&&Object.keys(S.submissions).length>0?`<span class="muted" style="font-size:11px;">PDF includes submitted sections only</span>`:''}
+      </div>
+      ${allOrders.length>0?renderPreview(allOrders):`<div class="alert alert-info">No submissions yet. Click a country above to start.</div>`}
+    </div>`;
+}
+
+function renderPreview(orders) {
+  return [{key:'pending',label:'Pending Pick Up'},{key:'transit',label:'In Transit Delays'},{key:'hold',label:'On Hold / Returns'}].map(d=>{
+    const rows=orders.filter(o=>o.section===d.key);
+    if(!rows.length) return '';
+    return`<div class="card" style="padding:1rem;">
+      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">${d.label} <span class="muted">(${rows.length})</span></div>
+      <div style="overflow-x:auto;"><table class="otbl">
+        <thead><tr><th>Tracking ID</th><th>Order ID</th><th>Ship To</th><th>Days</th><th>Status</th><th>Action</th><th>Urgent</th></tr></thead>
+        <tbody>${rows.map(o=>`<tr class="${o.urgent?'row-urgent':''}">
+          <td style="font-family:monospace;font-size:10.5px;">${o.trackingId||'—'}</td>
+          <td>${o.orderId||'—'}</td><td>${o.shipTo}</td><td>${o.days||'—'}</td>
+          <td>${o.status||'—'}</td><td>${o.action||'—'}</td>
+          <td>${o.urgent?'<span class="badge badge-urg">!</span>':'—'}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+    </div>`;
+  }).join('');
+}
+
+// ── FORM ─────────────────────────────────────────────────────
+const mkEmpty=(sec,code,store,submittedBy='')=>({trackingId:'',orderId:'',store,shipTo:code,days:'',status:'',action:'',urgent:false,section:sec,type:'',reason:'',submittedBy});
+
+function selectCountry(code) {
+  const ctry=COUNTRIES.find(c=>c.code===code);
+  if (!S.formData[code]) {
+    S.formData[code]={
+      preparedBy:S.user.name,
+      pending:[mkEmpty('pending',code,ctry.store,S.user.name)],
+      transit:[mkEmpty('transit',code,ctry.store,S.user.name)],
+      hold:   [mkEmpty('hold',   code,ctry.store,S.user.name)],
+      backlogs:[{destination:code,store:ctry.store,date:'',count:'',remarks:''}],
+    };
+  } else {
+    S.formData[code].preparedBy=S.user.name;
+  }
+  renderForm(code);
+}
+
+function renderForm(code) {
+  const ctry=COUNTRIES.find(c=>c.code===code), fd=S.formData[code];
+  const stores=getStores(code);
+
+  const mkRow=(o,idx,sec)=>{
+    const isPU=sec==='pending', isHold=sec==='hold';
+    const cb=(field,arr,val)=>combo(arr,val,(v)=>upd(code,sec,idx,field,v));
+    return`<tr class="${o.urgent?'row-urgent':''}">
+      <td><input type="text" value="${o.trackingId}" placeholder="Tracking ID" oninput="upd('${code}','${sec}',${idx},'trackingId',this.value)"></td>
+      <td><input type="text" value="${o.orderId}" placeholder="Order ID" oninput="upd('${code}','${sec}',${idx},'orderId',this.value)"></td>
+      <td>${cb('store',stores,o.store||ctry.store)}</td>
+      <td>${cb('shipTo',SETTINGS.shipTo,o.shipTo||code)}</td>
+      ${isHold
+        ?`<td>${cb('type',SETTINGS.types,o.type||'')}</td><td>${cb('reason',SETTINGS.reasons,o.reason||'')}</td>`
+        :`<td><input type="number" value="${o.days||''}" placeholder="Days" min="0" style="width:55px;" oninput="upd('${code}','${sec}',${idx},'days',this.value)"></td>`}
+      ${!isHold?`<td>${cb('status',isPU?SETTINGS.puStatuses:SETTINGS.statuses,o.status||'')}</td>`:''}
+      <td>${cb('action',SETTINGS.actions,o.action||'')}</td>
+      <td style="font-size:11px;color:rgba(0,76,79,.5);padding:4px 6px;white-space:nowrap;">${o.submittedBy||S.user.name}</td>
+      <td style="text-align:center;"><input type="checkbox" ${o.urgent?'checked':''} style="width:14px;height:14px;cursor:pointer;accent-color:var(--danger);" onchange="upd('${code}','${sec}',${idx},'urgent',this.checked)"></td>
+      <td><button class="btn-del" onclick="delOrder('${code}','${sec}',${idx})">✕</button></td>
+    </tr>`;
+  };
+
+  const mkSec=(sec,label,note)=>{
+    const isHold=sec==='hold';
+    return`<div style="margin-bottom:1.5rem;">
+      <div class="sec-hdr"><span>${label}</span><span class="sec-note">${note}</span></div>
+      <div style="overflow-x:auto;"><table class="otbl" style="min-width:660px;">
+        <thead><tr><th>Tracking ID</th><th>Order ID</th><th>Store</th><th>Ship To</th>
+          ${isHold?'<th>Type</th><th>Reason</th>':'<th>Days</th>'}
+          ${!isHold?'<th>Status</th>':''}
+          <th>Action Taken</th><th>By</th><th title="Urgent">!</th><th></th>
+        </tr></thead>
+        <tbody>${fd[sec].map((o,i)=>mkRow(o,i,sec)).join('')}</tbody>
+      </table></div>
+      <button class="btn btn-ghost btn-sm mt1" onclick="addOrder('${code}','${sec}')">+ Add order</button>
+    </div>`;
+  };
+
+  root().innerHTML=`
+    <div class="wrap">
+      <div class="flex items-c gap2" style="margin-bottom:1.25rem;">
+        <button class="btn btn-ghost btn-sm" onclick="renderDashboard()">← Back</button>
+        <div>
+          <h2>${ctry.label}</h2>
+          <p class="muted" style="margin-top:2px;">Submitting as <strong>${S.user.name}</strong></p>
+        </div>
+      </div>
+      <div class="card">
+        ${mkSec('pending','1 · Pending Pick Up','> 1 day')}
+        ${mkSec('transit','2 · In Transit Delays','MY/SG > 5 days · PH/AU/US > 10 days')}
+        ${mkSec('hold','3 · On Hold / Returns','')}
+        <div style="margin-bottom:1.5rem;">
+          <div class="sec-hdr"><span>4 · Order Backlogs</span></div>
+          <div style="overflow-x:auto;"><table class="otbl" style="min-width:480px;">
+            <thead><tr><th>Destination</th><th>Store</th><th>Date</th><th>Order Count</th><th>Remarks</th><th></th></tr></thead>
+            <tbody>${fd.backlogs.map((b,i)=>`<tr>
+              <td>${combo(SETTINGS.shipTo,b.destination||code,(v)=>updB(code,i,'destination',v))}</td>
+              <td>${combo(stores,b.store||ctry.store,(v)=>updB(code,i,'store',v))}</td>
+              <td><input type="text" value="${b.date}" placeholder="DD/MM" style="width:65px;" oninput="updB('${code}',${i},'date',this.value)"></td>
+              <td><input type="number" value="${b.count}" placeholder="0" min="0" style="width:65px;" oninput="updB('${code}',${i},'count',this.value)"></td>
+              <td><input type="text" value="${b.remarks}" placeholder="Remarks" oninput="updB('${code}',${i},'remarks',this.value)"></td>
+              <td><button class="btn-del" onclick="delBlog('${code}',${i})">✕</button></td>
+            </tr>`).join('')}</tbody>
+          </table></div>
+          <button class="btn btn-ghost btn-sm mt1" onclick="addBlog('${code}')">+ Add row</button>
+        </div>
+        <hr class="divider">
+        <div class="flex gap2">
+          <button class="btn btn-primary" onclick="submitSection('${code}')">Submit section</button>
+          <button class="btn btn-ghost" onclick="renderDashboard()">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function upd(code,sec,idx,field,val){if(S.formData[code]&&S.formData[code][sec])S.formData[code][sec][idx][field]=val;}
+function updB(code,idx,field,val){if(S.formData[code]&&S.formData[code].backlogs)S.formData[code].backlogs[idx][field]=val;}
+function addOrder(code,sec){const ctry=COUNTRIES.find(c=>c.code===code);S.formData[code][sec].push(mkEmpty(sec,code,ctry.store));renderForm(code);}
+function delOrder(code,sec,idx){S.formData[code][sec].splice(idx,1);if(!S.formData[code][sec].length){const ctry=COUNTRIES.find(c=>c.code===code);S.formData[code][sec].push(mkEmpty(sec,code,ctry.store));}renderForm(code);}
+function addBlog(code){S.formData[code].backlogs.push({destination:code,store:'',date:'',count:'',remarks:''});renderForm(code);}
+function delBlog(code,idx){S.formData[code].backlogs.splice(idx,1);if(!S.formData[code].backlogs.length)S.formData[code].backlogs.push({destination:code,store:'',date:'',count:'',remarks:''});renderForm(code);}
+function submitSection(code){const fd=S.formData[code];S.submissions[code]=[...fd.pending,...fd.transit,...fd.hold].filter(o=>o.trackingId.trim());renderDashboard();}
+
+// ── SETTINGS ─────────────────────────────────────────────────
+const SETTING_DEFS = [
+  {key:'platforms', label:'Store Platforms',              hint:'Used to generate store options per country (e.g. Shopee MY, Lazada PH)'},
+  {key:'actions',   label:'Action Taken Options',         hint:'Dropdown options in the Action Taken field'},
+  {key:'reasons',   label:'On Hold / Return Reasons',     hint:'Dropdown options for the Reason field in On Hold & Returns'},
+  {key:'statuses',  label:'In Transit Statuses',          hint:'Status options for transit and pending pick up sections'},
+  {key:'types',     label:'On Hold / Return Types',       hint:'Type options for the returns section'},
+  {key:'shipTo',    label:'Ship To Countries',            hint:'Country codes available in Ship To dropdowns'},
+];
+
+function renderSettings() {
+  root().innerHTML=`
+    <div class="wrap">
+      <div class="flex items-c gap2" style="margin-bottom:1.5rem;">
+        <button class="btn btn-ghost btn-sm" onclick="renderDashboard()">Back</button>
+        <div>
+          <h2>Settings</h2>
+          <p class="muted" style="margin-top:2px;">Manage dropdown list contents across the report tool</p>
+        </div>
+      </div>
+      <div class="settings-grid">
+        ${SETTING_DEFS.map(def=>`
+          <div class="setting-card">
+            <h3>${def.label}</h3>
+            <p class="muted" style="font-size:11px;margin-bottom:10px;">${def.hint}</p>
+            <div class="tag-list" id="tags-${def.key}">
+              ${SETTINGS[def.key].map((v,i)=>`
+                <span class="tag">${v}<button onclick="removeTag('${def.key}',${i})">x</button></span>
+              `).join('')}
+            </div>
+            <div class="add-tag-row">
+              <input type="text" id="new-${def.key}" placeholder="Add new..." onkeydown="if(event.key==='Enter')addTag('${def.key}')">
+              <button class="btn btn-primary btn-sm" onclick="addTag('${def.key}')">Add</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+      ${S.user.role==='manager'?`
+      <div style="margin-top:1.5rem;">
+        <div class="flex items-c gap2" style="margin-bottom:1rem;">
+          <h2>User Management</h2>
+          <button class="btn btn-primary btn-sm" style="margin-left:auto;" onclick="showUserModal()">+ Add user</button>
+        </div>
+        <div class="card" style="padding:0;overflow:hidden;">
+          <table class="um-table">
+            <thead><tr><th>Name</th><th>Username</th><th>Password</th><th>Role</th><th></th></tr></thead>
+            <tbody>
+              ${ACCOUNTS.map((a,i)=>`<tr>
+                <td><strong>${a.name}</strong></td>
+                <td style="font-family:monospace;font-size:12px;">${a.username}</td>
+                <td style="font-family:monospace;font-size:12px;color:rgba(0,76,79,.4);">........</td>
+                <td><span class="role-pill ${a.role==='manager'?'role-manager':'role-pic'}">${a.role==='manager'?'Manager':'PIC'}</span></td>
+                <td style="text-align:right;">
+                  <div class="flex gap2" style="justify-content:flex-end;">
+                    <button class="btn btn-ghost btn-sm" onclick="showUserModal(${i})">Edit</button>
+                    ${a.username!==S.user.username?`<button class="btn-del" onclick="deleteUser(${i})">Delete</button>`:`<span class="muted" style="font-size:11px;padding:3px 6px;">You</span>`}
+                  </div>
+                </td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`:''}
+    </div>`;
+}
+
+function addTag(key) {
+  const inp=document.getElementById(`new-${key}`);
+  const val=inp.value.trim();
+  if (!val||SETTINGS[key].includes(val)) { inp.focus(); return; }
+  SETTINGS[key].push(val);
+  inp.value='';
+  renderSettings();
+}
+
+function removeTag(key, idx) {
+  if (SETTINGS[key].length<=1) { alert('At least one item is required.'); return; }
+  SETTINGS[key].splice(idx,1);
+  renderSettings();
+}
+
+// ── USER MANAGEMENT ──────────────────────────────────────────
+function renderUserManagement() {
+  root().innerHTML=`
+    <div class="wrap">
+      <div class="flex items-c gap2" style="margin-bottom:1.5rem;">
+        <button class="btn btn-ghost btn-sm" onclick="renderDashboard()">← Back</button>
+        <div><h2>User Management</h2><p class="muted" style="margin-top:2px;">Manage team accounts and roles</p></div>
+        <button class="btn btn-primary btn-sm" style="margin-left:auto;" onclick="showUserModal()">+ Add user</button>
+      </div>
+      <div class="card" style="padding:0;overflow:hidden;">
+        <table class="um-table">
+          <thead><tr><th>Name</th><th>Username</th><th>Password</th><th>Role</th><th></th></tr></thead>
+          <tbody>
+            ${ACCOUNTS.map((a,i)=>`<tr>
+              <td><strong>${a.name}</strong></td>
+              <td style="font-family:monospace;font-size:12px;">${a.username}</td>
+              <td style="font-family:monospace;font-size:12px;color:rgba(0,76,79,.4);">••••••••</td>
+              <td><span class="role-pill ${a.role==='manager'?'role-manager':'role-pic'}">${a.role==='manager'?'Manager':'PIC'}</span></td>
+              <td style="text-align:right;">
+                <div class="flex gap2" style="justify-content:flex-end;">
+                  <button class="btn btn-ghost btn-sm" onclick="showUserModal(${i})">Edit</button>
+                  ${a.username!==S.user.username?`<button class="btn-del" onclick="deleteUser(${i})">Delete</button>`:`<span class="muted" style="font-size:11px;padding:3px 6px;">You</span>`}
+                </div>
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function showUserModal(idx=null) {
+  const isEdit=idx!==null, a=isEdit?ACCOUNTS[idx]:{name:'',username:'',password:'',role:'pic'};
+  const el=document.createElement('div');
+  el.className='modal-overlay'; el.id='um-modal';
+  el.innerHTML=`<div class="modal">
+    <h3>${isEdit?'Edit user':'Add new user'}</h3>
+    <div class="form-group" style="margin-bottom:.85rem;">
+      <label class="form-label">Full name</label>
+      <input class="form-input" id="um-name" type="text" value="${a.name}" placeholder="e.g. Rose">
+    </div>
+    <div class="form-group" style="margin-bottom:.85rem;">
+      <label class="form-label">Username</label>
+      <input class="form-input" id="um-user" type="text" value="${a.username}" placeholder="e.g. rose">
+    </div>
+    <div class="form-group" style="margin-bottom:.85rem;">
+      <label class="form-label">${isEdit?'New password (leave blank to keep)':'Password'}</label>
+      <input class="form-input" id="um-pass" type="password" placeholder="${isEdit?'Leave blank to keep':'Set password'}">
+    </div>
+    <div class="form-group" style="margin-bottom:.85rem;">
+      <label class="form-label">Role</label>
+      <select class="form-input" id="um-role">
+        <option value="pic"${a.role==='pic'?' selected':''}>PIC — Can fill sections & generate PDF</option>
+        <option value="manager"${a.role==='manager'?' selected':''}>Manager — Full access including settings</option>
+      </select>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveUser(${idx})">Save</button>
+    </div>
+  </div>`;
+  document.body.appendChild(el);
+  el.addEventListener('click',e=>{if(e.target===el)closeModal();});
+  document.getElementById('um-name').focus();
+}
+
+function saveUser(idx) {
+  const name=document.getElementById('um-name').value.trim();
+  const username=document.getElementById('um-user').value.trim().toLowerCase();
+  const password=document.getElementById('um-pass').value;
+  const role=document.getElementById('um-role').value;
+  if(!name||!username){alert('Name and username are required.');return;}
+  if(ACCOUNTS.findIndex((a,i)=>a.username===username&&i!==idx)>-1){alert('Username already exists.');return;}
+  if(idx===null){if(!password){alert('Password is required for new users.');return;}ACCOUNTS.push({name,username,password,role});}
+  else{ACCOUNTS[idx]={name,username,password:password||ACCOUNTS[idx].password,role};if(S.user.username===username)S.user={...S.user,name,role};}
+  closeModal(); renderUserManagement();
+}
+function deleteUser(idx){if(!confirm(`Delete "${ACCOUNTS[idx].name}"?`))return;ACCOUNTS.splice(idx,1);renderUserManagement();}
+function closeModal(){const m=document.getElementById('um-modal');if(m)m.remove();}
+
+// ── PDF ──────────────────────────────────────────────────────
+function generatePDF(){
+  const{jsPDF}=window.jspdf;
+  const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
+  const W=297,M=16,TEAL=[0,76,79],LTEAL=[0,76,79,0.08],CREAM=[253,248,242],
+        REDBG=[254,226,226],RED=[185,28,28],GREY=[245,245,243],DKGREY=[100,100,100];
+  const allOrders=Object.values(S.submissions).flat();
+  const urgentList=detectUrgent(allOrders);
+  const prepBy=Object.values(S.formData).map(f=>f.preparedBy).filter(Boolean).join(', ')||'—';
+  let y=0;
+
+  // ── HEADER ──
+  doc.setFillColor(...TEAL);
+  doc.rect(0,0,W,28,'F');
+  doc.setFont('helvetica','bold');doc.setFontSize(18);doc.setTextColor(...CREAM);
+  doc.text('DAILY LOGISTICS REPORT',M,17);
+  doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(200,230,230);
+  doc.text(`${TODAY}   -   Generated: ${new Date().toLocaleTimeString()}`,M,24);
+  y=36;
+
+  // ── URGENT BOX ──
+  if(urgentList.length){
+    const boxH=14+urgentList.length*9;
+    doc.setFillColor(...REDBG);
+    doc.roundedRect(M,y,W-M*2,boxH,3,3,'F');
+    doc.setDrawColor(...RED);
+    doc.setLineWidth(0.5);
+    doc.roundedRect(M,y,W-M*2,boxH,3,3,'S');
+    doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(...RED);
+    doc.text(`!! URGENT ISSUES REQUIRING ATTENTION (${urgentList.length})`,M+5,y+8);
+    y+=13;
+    doc.setFont('helvetica','normal');doc.setFontSize(9);
+    urgentList.forEach(u=>{
+      doc.text(`-  ${u.order.trackingId||'—'}${u.order.orderId?'  /  '+u.order.orderId:''}  [${u.order.shipTo||''}]  -  ${u.reasons.join('  |  ')}`,M+6,y+5);
+      y+=8;
+    });
+    y+=6;
+  }
+
+  // ── SUMMARY ──
+  doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(...TEAL);
+  doc.text('SUMMARY BY COUNTRY',M,y);
+  y+=5;
+  doc.autoTable({
+    startY:y,
+    head:[['Country','Pending Pick Up','In Transit Delays','On Hold / Returns','Order Backlogs']],
+    body:COUNTRIES.map(c=>{
+      const co=allOrders.filter(o=>o.shipTo===c.code);
+      const bl=Object.values(S.formData).flatMap(f=>f.backlogs||[]).filter(b=>b.destination===c.code);
+      return[
+        c.label+' ('+c.code+')',
+        co.filter(o=>o.section==='pending').length||'—',
+        co.filter(o=>o.section==='transit').length||'—',
+        co.filter(o=>o.section==='hold').length||'—',
+        bl.reduce((s,b)=>s+(parseInt(b.count)||0),0)||'—'
+      ];
+    }),
+    styles:{fontSize:10,cellPadding:4,halign:'center'},
+    columnStyles:{0:{halign:'left',fontStyle:'bold'}},
+    headStyles:{fillColor:TEAL,textColor:CREAM,fontStyle:'bold',fontSize:10,cellPadding:4},
+    alternateRowStyles:{fillColor:GREY},
+    margin:{left:M,right:M},tableWidth:W-M*2
+  });
+  y=doc.lastAutoTable.finalY+10;
+
+  // ── DETAIL SECTIONS ──
+  const sections=[
+    {key:'pending',label:'1.  PENDING PICK UP',sub:'> 1 day',cols:['Tracking ID','Order ID','Store','Ship To','Days Pending','Status','Action Taken','Submitted By','Urgent']},
+    {key:'transit',label:'2.  IN TRANSIT DELAYS',sub:'MY/SG > 5 days   |   PH/AU/US > 10 days',cols:['Tracking ID','Order ID','Store','Ship To','Delayed Days','Status','Action Taken','Submitted By','Urgent']},
+    {key:'hold',   label:'3.  ON HOLD / RETURNS',sub:'',cols:['Tracking ID','Order ID','Store','Ship To','Type','Reason','Action Taken','Submitted By','Urgent']},
+  ];
+
+  sections.forEach(sec=>{
+    const rows=allOrders.filter(o=>o.section===sec.key);
+    if(!rows.length)return;
+    if(y>170){doc.addPage();y=16;}
+
+    // section title bar — taller when subtitle exists
+    const barH = sec.sub ? 14 : 10;
+    doc.setFillColor(...TEAL);
+    doc.roundedRect(M,y,W-M*2,barH,2,2,'F');
+    doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(...CREAM);
+    doc.text(sec.label, M+4, y+(sec.sub ? 6 : 7));
+    if(sec.sub){
+      doc.setFont('helvetica','normal');doc.setFontSize(8.5);doc.setTextColor(180,220,220);
+      doc.text(sec.sub, M+4, y+12);
+    }
+    y += barH + 4;
+
+    doc.autoTable({
+      startY:y,
+      head:[sec.cols],
+      body:rows.map(o=>{
+        const isUrg=detectUrgent([o]).length>0;
+        return sec.key==='hold'
+          ?[o.trackingId||'—',o.orderId||'—',o.store||'—',o.shipTo||'—',o.type||'—',o.reason||'—',o.action||'—',isUrg?'!! YES':'']
+          :[o.trackingId||'—',o.orderId||'—',o.store||'—',o.shipTo||'—',o.days||'—',o.status||'—',o.action||'—',isUrg?'!! YES':''];
+      }),
+      styles:{fontSize:9,cellPadding:3.5,overflow:'ellipsize'},
+      headStyles:{fillColor:[230,240,240],textColor:TEAL,fontStyle:'bold',fontSize:9,cellPadding:4},
+      alternateRowStyles:{fillColor:GREY},
+      columnStyles:{0:{fontStyle:'bold',fontSize:8.5},7:{textColor:RED,fontStyle:'bold',halign:'center'}},
+      didParseCell:(d)=>{
+        if(d.section==='body'&&d.row.raw[7]==='⚠ YES'){
+          d.cell.styles.fillColor=REDBG;
+        }
+      },
+      margin:{left:M,right:M},tableWidth:W-M*2
+    });
+    y=doc.lastAutoTable.finalY+10;
+  });
+
+  // ── BACKLOGS ──
+  const blogs=Object.values(S.formData).flatMap(f=>f.backlogs||[]).filter(b=>b.destination&&b.count!=='');
+  if(blogs.length){
+    if(y>170){doc.addPage();y=16;}
+    doc.setFillColor(...TEAL);
+    doc.roundedRect(M,y,W-M*2,10,2,2,'F');
+    doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(...CREAM);
+    doc.text('4  .  ORDER BACKLOGS',M+4,y+7);
+    y+=14;
+    doc.autoTable({
+      startY:y,
+      head:[['Destination','Store','Date','Order Count','Remarks']],
+      body:blogs.map(b=>[b.destination||'—',b.store||'—',b.date||'—',b.count||'0',b.remarks||'—']),
+      styles:{fontSize:9,cellPadding:3.5},
+      headStyles:{fillColor:[230,240,240],textColor:TEAL,fontStyle:'bold',fontSize:9,cellPadding:4},
+      columnStyles:{3:{halign:'center',fontStyle:'bold'}},
+      alternateRowStyles:{fillColor:GREY},
+      margin:{left:M,right:M},tableWidth:W-M*2
+    });
+  }
+
+  // ── FOOTER ──
+  const pages=doc.internal.getNumberOfPages();
+  for(let i=1;i<=pages;i++){
+    doc.setPage(i);
+    doc.setFillColor(...TEAL);doc.rect(0,200,W,10,'F');
+    doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(...CREAM);
+    doc.text(`Purest Nest Pte Ltd  ·  Confidential  ·  Daily Logistics Report  ·  ${TODAY}`,M,206);
+    doc.text(`Page ${i} of ${pages}`,W-M,206,{align:'right'});
+  }
+
+  doc.save(`Logistics-Report-${TODAY.replace(/\//g,'-')}.pdf`);
+}
+
+renderLogin();
+</script>
+</body>
+</html>
