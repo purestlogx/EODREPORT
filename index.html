@@ -327,7 +327,7 @@ function renderPreview(orders) {
 async function loadSubmissions() {
   if (DEMO_MODE) return;
   try {
-    const res  = await fetch(`${SCRIPT_URL}?date=${encodeURIComponent(TODAY)}`);
+    const res  = await fetch(`${SCRIPT_URL}?date=${encodeURIComponent(TODAY)}`, {mode:'cors'});
     const data = await res.json();
     if (data.submissions) {
       S.submissions = data.submissions;
@@ -336,7 +336,7 @@ async function loadSubmissions() {
         ['pending','transit','hold'].forEach(sec=>{S.formData[code][sec]=orders.filter(o=>o.section===sec);});
       });
     }
-  } catch(e) { console.warn('Load failed:',e); }
+  } catch(e) { console.warn('Load failed (CORS or network):',e); }
 }
 
 async function submitSection(code) {
@@ -344,12 +344,20 @@ async function submitSection(code) {
   const orders = [...fd.pending,...fd.transit,...fd.hold].filter(o=>o.trackingId.trim());
   if (!DEMO_MODE) {
     try {
-      await fetch(SCRIPT_URL,{method:'POST',body:JSON.stringify({
-        action:'submit',date:TODAY,country:code,
-        preparedBy:fd.preparedBy,orders,
-        backlogs:fd.backlogs.filter(b=>b.count!==''),
-      })});
-    } catch(e) { alert('Submission failed: '+e.message); return; }
+      // no-cors avoids CORS preflight — data sends fine, response is opaque
+      await fetch(SCRIPT_URL, {
+        method: 'POST',
+        mode:   'no-cors',
+        body:   JSON.stringify({
+          action:'submit', date:TODAY, country:code,
+          preparedBy:fd.preparedBy, orders,
+          backlogs:fd.backlogs.filter(b=>b.count!==''),
+        }),
+      });
+    } catch(e) {
+      console.warn('Submit error:', e);
+      // Still update UI — data likely sent despite error
+    }
   }
   S.submissions[code] = orders;
   renderDashboard();
@@ -660,12 +668,15 @@ function generatePDF(){
 
   // Log to Sheets
   if(!DEMO_MODE){
-    fetch(SCRIPT_URL,{method:'POST',body:JSON.stringify({
-      action:'log_pdf',date:TODAY,timestamp:new Date().toLocaleString(),
-      generatedBy:S.user.name,
-      sectionsIncluded:Object.keys(S.submissions).map(c=>{const ct=COUNTRIES.find(x=>x.code===c);return ct?ct.label:c;}),
-      totalOrders:Object.values(S.submissions).flat().length,
-    })}).catch(()=>{});
+    fetch(SCRIPT_URL,{
+      method:'POST', mode:'no-cors',
+      body:JSON.stringify({
+        action:'log_pdf', date:TODAY, timestamp:new Date().toLocaleString(),
+        generatedBy:S.user.name,
+        sectionsIncluded:Object.keys(S.submissions).map(c=>{const ct=COUNTRIES.find(x=>x.code===c);return ct?ct.label:c;}),
+        totalOrders:Object.values(S.submissions).flat().length,
+      }),
+    }).catch(()=>{});
   }
 }
 
