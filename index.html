@@ -140,18 +140,21 @@ const COUNTRIES = [
 
 let ACCOUNTS = [
   {username:'rose',  password:'rose123',  name:'Rose',  role:'pic'},
-  {username:'alona',   password:'alona123',   name:'Alona',   role:'manager'},
+  {username:'gen',   password:'gen123',   name:'Gen',   role:'pic'},
+  {username:'jay',   password:'jay123',   name:'Jay',   role:'pic'},
+  {username:'sam',   password:'sam123',   name:'Sam',   role:'pic'},
   {username:'admin', password:'admin123', name:'Admin', role:'manager'},
 ];
 
 let SETTINGS = {
-  platforms: ['Shopify','Shopee','Lazada','TikTok'],
-  actions:   ['Chased courier','Awaiting courier reply','Awaiting 3PL feedback','Reship done','Pending pick up','LIT - investigating'],
-  statuses:  ['Pending','Delivered','In Transit'],
-  puStatuses:['Pending','Handed Over'],
-  types:     ['On Hold','RTS'],
-  reasons:   ['CX not answering','Wrong address','CX requested reschedule','Failed delivery attempts','Damaged parcel','Return to sender'],
-  shipTo:    ['MY','PH','AU','US'],
+  platforms:  ['Shopify','Shopee','Lazada','TikTok'],
+  actions:    ['Chased courier','Awaiting courier reply','Awaiting 3PL feedback','Reship done','Pending pick up','LIT - investigating'],
+  statuses:   ['Pending','Delivered','In Transit'],
+  puStatuses: ['Pending','Handed Over'],
+  types:      ['On Hold','RTS'],
+  reasons:    ['CX not answering','Wrong address','CX requested reschedule','Failed delivery attempts','Damaged parcel','Return to sender'],
+  blogRemarks:['Awaiting 3PL processing','Pending courier collection','Fraud risk','Holiday backlog','Awaiting payment confirmation'],
+  shipTo:     ['MY','PH','AU','US'],
 };
 
 const S = {user:null, formData:{}, submissions:{}};
@@ -207,7 +210,7 @@ function renderLogin(err) {
     </div>`;
 }
 
-function doLogin() {
+async function doLogin() {
   const u = (document.getElementById('lu').value||'').trim().toLowerCase();
   const p = document.getElementById('lp').value;
   const acct = ACCOUNTS.find(a=>a.username===u && a.password===p);
@@ -219,6 +222,9 @@ function doLogin() {
   document.getElementById('nav-role').style.display = '';
   document.getElementById('btn-settings').style.display = '';
   document.getElementById('btn-logout').style.display = '';
+
+  // Load persisted settings + accounts from Sheets before showing dashboard
+  if (!DEMO_MODE) await loadSettingsFromSheets();
   renderDashboard();
 }
 
@@ -322,6 +328,28 @@ function renderPreview(orders) {
 }
 
 // ── API ───────────────────────────────────────────────────────
+async function loadSettingsFromSheets() {
+  try {
+    const res  = await fetch(`${SCRIPT_URL}?action=get_settings`, {mode:'cors'});
+    const data = await res.json();
+    if (data.settings) {
+      SETTINGS  = {...SETTINGS,  ...data.settings};
+    }
+    if (data.accounts && data.accounts.length > 0) {
+      ACCOUNTS = data.accounts;
+    }
+  } catch(e) { console.warn('Could not load settings from Sheets:', e); }
+}
+
+function saveSettingsToSheets() {
+  pushToSheets({action:'save_settings', settings:SETTINGS, accounts:ACCOUNTS});
+}
+function pushToSheets(payload) {
+  if (DEMO_MODE) return;
+  fetch(SCRIPT_URL, {method:'POST', mode:'no-cors', body:JSON.stringify(payload)})
+    .catch(e => console.warn('Background sync failed:', e));
+}
+
 async function loadSubmissions() {
   if (DEMO_MODE) return;
   try {
@@ -334,31 +362,23 @@ async function loadSubmissions() {
         ['pending','transit','hold'].forEach(sec=>{S.formData[code][sec]=orders.filter(o=>o.section===sec);});
       });
     }
-  } catch(e) { console.warn('Load failed (CORS or network):',e); }
+  } catch(e) { console.warn('Load failed:', e); }
 }
 
-async function submitSection(code) {
+function submitSection(code) {
   const fd     = S.formData[code];
   const orders = [...fd.pending,...fd.transit,...fd.hold].filter(o=>o.trackingId.trim());
-  if (!DEMO_MODE) {
-    try {
-      // no-cors avoids CORS preflight — data sends fine, response is opaque
-      await fetch(SCRIPT_URL, {
-        method: 'POST',
-        mode:   'no-cors',
-        body:   JSON.stringify({
-          action:'submit', date:TODAY, country:code,
-          preparedBy:fd.preparedBy, orders,
-          backlogs:fd.backlogs.filter(b=>b.count!==''),
-        }),
-      });
-    } catch(e) {
-      console.warn('Submit error:', e);
-      // Still update UI — data likely sent despite error
-    }
-  }
+
+  // 1. Update UI instantly
   S.submissions[code] = orders;
   renderDashboard();
+
+  // 2. Send to Sheets in background — no waiting
+  pushToSheets({
+    action:'submit', date:TODAY, country:code,
+    preparedBy:fd.preparedBy, orders,
+    backlogs:fd.backlogs.filter(b=>b.count!==''),
+  });
 }
 
 // ── FORM ─────────────────────────────────────────────────────
@@ -440,7 +460,7 @@ function renderForm(code) {
               <td>${combo(stores,b.store||ctry.store,(v)=>updB(code,i,'store',v))}</td>
               <td><input type="text" value="${b.date}" placeholder="DD/MM" style="width:65px;" oninput="updB('${code}',${i},'date',this.value)"></td>
               <td><input type="number" value="${b.count}" placeholder="0" min="0" style="width:65px;" oninput="updB('${code}',${i},'count',this.value)"></td>
-              <td><input type="text" value="${b.remarks}" placeholder="Remarks" oninput="updB('${code}',${i},'remarks',this.value)"></td>
+              <td>${combo(SETTINGS.blogRemarks,b.remarks||'',(v)=>updB(code,i,'remarks',v))}</td>
               <td><button class="btn-del" onclick="delBlog('${code}',${i})">X</button></td>
             </tr>`).join('')}</tbody>
           </table></div>
@@ -464,13 +484,14 @@ function delBlog(code,idx){S.formData[code].backlogs.splice(idx,1);if(!S.formDat
 
 // ── SETTINGS ─────────────────────────────────────────────────
 const SETTING_DEFS = [
-  {key:'platforms', label:'Store Platforms',          hint:'Generates store options per country (e.g. Shopee MY)'},
-  {key:'actions',   label:'Action Taken Options',     hint:'Dropdown for Action Taken field'},
-  {key:'reasons',   label:'On Hold / Return Reasons', hint:'Dropdown for Reason field in returns section'},
-  {key:'statuses',  label:'In Transit Statuses',      hint:'Status options for transit sections'},
-  {key:'puStatuses',label:'Pick Up Statuses',         hint:'Status options for pending pick up'},
-  {key:'types',     label:'On Hold / Return Types',   hint:'Type options for returns section'},
-  {key:'shipTo',    label:'Ship To Countries',        hint:'Country codes in Ship To dropdowns'},
+  {key:'platforms',  label:'Store Platforms',          hint:'Generates store options per country (e.g. Shopee MY)'},
+  {key:'actions',    label:'Action Taken Options',     hint:'Dropdown for Action Taken field'},
+  {key:'reasons',    label:'On Hold / Return Reasons', hint:'Dropdown for Reason field in returns section'},
+  {key:'blogRemarks',label:'Order Backlog Remarks',    hint:'Dropdown for Remarks field in Order Backlogs'},
+  {key:'statuses',   label:'In Transit Statuses',      hint:'Status options for transit sections'},
+  {key:'puStatuses', label:'Pick Up Statuses',         hint:'Status options for pending pick up'},
+  {key:'types',      label:'On Hold / Return Types',   hint:'Type options for returns section'},
+  {key:'shipTo',     label:'Ship To Countries',        hint:'Country codes in Ship To dropdowns'},
 ];
 
 function renderSettings() {
@@ -479,6 +500,7 @@ function renderSettings() {
       <div class="flex items-c gap2" style="margin-bottom:1.5rem;">
         <button class="btn btn-ghost btn-sm" onclick="renderDashboard()">Back</button>
         <div><h2>Settings</h2><p class="muted" style="margin-top:2px;">Manage dropdown lists and user accounts</p></div>
+        <button class="btn btn-primary btn-sm" style="margin-left:auto;" onclick="saveAndConfirm()">Save Settings</button>
       </div>
       <div class="settings-grid">
         ${SETTING_DEFS.map(def=>`
