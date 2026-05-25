@@ -157,7 +157,7 @@ let SETTINGS = {
   shipTo:     ['MY','PH','AU','US'],
 };
 
-const S = {user:null, formData:{}, submissions:{}};
+const S = {user:null, formData:{}, submissions:{}, currentPage:'login'};
 const root = () => document.getElementById('root');
 const getStores = code => ['Shopify SG', ...SETTINGS.platforms.map(p=>`${p} ${code}`)];
 const mkEmpty   = (sec,code,store,by='') => ({trackingId:'',orderId:'',store,shipTo:code,days:'',status:'',action:'',urgent:false,section:sec,type:'',reason:'',submittedBy:by});
@@ -187,6 +187,7 @@ function comboText(i){const fn=CB[i.dataset.cb];if(fn)fn(i.value);}
 
 // ── AUTH ──────────────────────────────────────────────────────
 function renderLogin(err) {
+  S.currentPage = 'login';
   root().innerHTML = `
     <div class="login-wrap">
       <div class="login-card">
@@ -258,8 +259,13 @@ function detectUrgent(orders) {
 
 // ── DASHBOARD ────────────────────────────────────────────────
 function renderDashboard() {
+  S.currentPage = 'dashboard';
   _drawDashboard();
-  if (!DEMO_MODE) loadSubmissions().then(()=>{ if(S.user) _drawDashboard(); }).catch(()=>{});
+  if (!DEMO_MODE) {
+    loadSubmissions().then(()=>{
+      if (S.user && S.currentPage === 'dashboard') _drawDashboard();
+    }).catch(()=>{});
+  }
 }
 
 function _drawDashboard() {
@@ -399,6 +405,7 @@ function selectCountry(code) {
 }
 
 function renderForm(code) {
+  S.currentPage = 'form';
   const ctry   = COUNTRIES.find(c=>c.code===code);
   const fd     = S.formData[code];
   const stores = getStores(code);
@@ -495,6 +502,7 @@ const SETTING_DEFS = [
 ];
 
 function renderSettings() {
+  S.currentPage = 'settings';
   root().innerHTML = `
     <div class="wrap">
       <div class="flex items-c gap2" style="margin-bottom:1.5rem;">
