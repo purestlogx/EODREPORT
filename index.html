@@ -224,8 +224,18 @@ async function doLogin() {
   document.getElementById('btn-settings').style.display = '';
   document.getElementById('btn-logout').style.display = '';
 
-  // Load persisted settings + accounts from Sheets before showing dashboard
-  if (!DEMO_MODE) await loadSettingsFromSheets();
+  // Show loading while fetching data
+  root().innerHTML = `
+    <div style="min-height:calc(100vh - 52px);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;">
+      <div style="width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--teal);border-radius:50%;animation:spin .7s linear infinite;"></div>
+      <p class="muted">Loading your data...</p>
+    </div>
+    <style>@keyframes spin{to{transform:rotate(360deg);}}</style>`;
+
+  if (!DEMO_MODE) {
+    await loadSettingsFromSheets();
+    await loadSubmissions();
+  }
   renderDashboard();
 }
 
@@ -261,11 +271,11 @@ function detectUrgent(orders) {
 function renderDashboard() {
   S.currentPage = 'dashboard';
   _drawDashboard();
-  if (!DEMO_MODE) {
-    loadSubmissions().then(()=>{
-      if (S.user && S.currentPage === 'dashboard') _drawDashboard();
-    }).catch(()=>{});
-  }
+}
+
+async function refreshDashboard() {
+  if (!DEMO_MODE) await loadSubmissions();
+  _drawDashboard();
 }
 
 function _drawDashboard() {
@@ -307,7 +317,7 @@ function _drawDashboard() {
       ${pendingCnt>0 ? `<div class="pending-banner">⏳ ${pendingCnt} section${pendingCnt>1?'s':''} still pending</div>` : ''}
       <div class="flex gap2 items-c" style="margin-bottom:1.5rem;flex-wrap:wrap;">
         <button class="btn btn-pdf" onclick="generatePDF()" ${allOrders.length===0?'disabled':''}>Download PDF</button>
-        <button class="btn btn-ghost btn-sm" onclick="renderDashboard()">Refresh</button>
+        <button class="btn btn-ghost btn-sm" onclick="refreshDashboard()">Refresh</button>
         ${DEMO_MODE?`<span class="muted" style="font-size:11px;">Demo mode — connect Apps Script to go live</span>`:''}
         ${pendingCnt>0&&allOrders.length>0?`<span class="muted" style="font-size:11px;">PDF includes submitted sections only</span>`:''}
       </div>
