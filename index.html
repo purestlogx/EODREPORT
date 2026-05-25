@@ -705,16 +705,15 @@ function generatePDF(){
   doc.save(`Logistics-Report-${TODAY.replace(/\//g,'-')}.pdf`);
 
   // Log to Sheets
-  if(!DEMO_MODE){
-    fetch(SCRIPT_URL,{
-      method:'POST', mode:'no-cors',
-      body:JSON.stringify({
-        action:'log_pdf', date:TODAY, timestamp:new Date().toLocaleString(),
-        generatedBy:S.user.name,
-        sectionsIncluded:Object.keys(S.submissions).map(c=>{const ct=COUNTRIES.find(x=>x.code===c);return ct?ct.label:c;}),
-        totalOrders:Object.values(S.submissions).flat().length,
-      }),
-    }).catch(()=>{});
+  if (!DEMO_MODE) {
+    pushToSheets({
+      action:           'log_pdf',
+      date:             TODAY,
+      timestamp:        new Date().toLocaleString(),
+      generatedBy:      S.user.name,
+      sectionsIncluded: Object.keys(S.submissions).map(c=>{const ct=COUNTRIES.find(x=>x.code===c);return ct?ct.label:c;}),
+      totalOrders:      Object.values(S.submissions).flat().length,
+    });
   }
 }
 
