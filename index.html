@@ -251,31 +251,34 @@ async function applySession(acct, isNewLogin) {
   document.getElementById('btn-settings').style.display = '';
   document.getElementById('btn-logout').style.display = '';
 
-  // Show loading spinner
-  root().innerHTML = `
-    <div style="min-height:calc(100vh - 52px);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;">
-      <div style="width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--teal);border-radius:50%;animation:spin .7s linear infinite;"></div>
-      <p class="muted">Loading your data...</p>
-    </div>
-    <style>@keyframes spin{to{transform:rotate(360deg);}}</style>`;
-
-  // Restore today's cached submissions from localStorage immediately
+  // Restore cached data instantly — no waiting
   const cached = LS.get(dataKey());
-  if (cached) S.submissions = cached;
-
-  // Load settings + fresh submissions from Sheets
-  if (!DEMO_MODE) {
-    await loadSettingsFromSheets();
-    await loadSubmissions();
+  if (cached) {
+    S.submissions = cached;
+    Object.entries(cached).forEach(([code,orders])=>{
+      if (!S.formData[code]) S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[]};
+      ['pending','transit','hold'].forEach(sec=>{
+        S.formData[code][sec] = orders.filter(o=>o.section===sec);
+      });
+    });
   }
 
-  // Save session to localStorage (persists across page reloads)
   if (isNewLogin) {
     LS.set(SESSION_KEY, {username: acct.username, loginTime: Date.now()});
   }
 
   lastActivity = Date.now();
+
+  // Show dashboard immediately with cached data
   renderDashboard();
+
+  // Sync from Sheets silently in background — won't block UI
+  if (!DEMO_MODE) {
+    loadSettingsFromSheets().catch(()=>{});
+    loadSubmissions().then(()=>{
+      if (S.user && S.currentPage === 'dashboard') _drawDashboard();
+    }).catch(()=>{});
+  }
 }
 
 function logout() {
@@ -795,12 +798,9 @@ function generatePDF(){
   if (saved && saved.username && saved.loginTime) {
     const age = Date.now() - saved.loginTime;
     if (age < INACTIVITY_MS) {
-      // Valid session — find account and restore
-      if (!DEMO_MODE) await loadSettingsFromSheets();
       const acct = ACCOUNTS.find(a=>a.username===saved.username);
       if (acct) { await applySession(acct, false); return; }
     }
-    // Session expired
     LS.del(SESSION_KEY);
   }
   renderLogin();
