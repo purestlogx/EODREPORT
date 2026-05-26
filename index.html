@@ -123,8 +123,8 @@ select:focus,input:focus{border-color:var(--teal);}
 
 <script>
 // ── CONFIG ────────────────────────────────────────────────────
-const SCRIPT_URL = 'https://script.google.com/a/macros/thepurestgroup.com/s/AKfycbz_ILSgehxI0gYQAZQ5tYRzM0AKKaL35PuAU9s4KMDeiCxqGp7IdUTo0R6tIPKWJJ_03w/exec';
-const DEMO_MODE  = SCRIPT_URL === 'YOUR_APPS_SCRIPT_URL_HERE';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxDLwo-K8zSDT_R1uZEbbqtWto_iL4PhEuQnaKHK4lUTzwgd0wArUPW-lidhU-V9cU9Iw/exec';
+const DEMO_MODE  = false;
 const TODAY      = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'numeric'});
 const URGENT_N   = 3;
 
@@ -157,9 +157,31 @@ let SETTINGS = {
   shipTo:     ['MY','PH','AU','US'],
 };
 
+// ── SAFE LOCAL STORAGE ───────────────────────────────────────
+// Works on GitHub Pages — fails silently in Claude preview
+const LS = {
+  get:  k    => { try { const v=localStorage.getItem(k); return v?JSON.parse(v):null; } catch(e){ return null; }},
+  set:  (k,v)=> { try { localStorage.setItem(k,JSON.stringify(v)); } catch(e){}},
+  del:  k    => { try { localStorage.removeItem(k); } catch(e){}},
+};
+const SESSION_KEY    = 'pn_logx_session';
+const dataKey        = () => `pn_logx_data_${TODAY}`;
+const INACTIVITY_MS  = 60 * 60 * 1000; // 1 hour
+let   lastActivity   = Date.now();
+
+// Track user activity for inactivity timer
+['click','keypress','touchstart'].forEach(ev =>
+  document.addEventListener(ev, () => lastActivity = Date.now(), {passive:true})
+);
+// Check inactivity every minute
+setInterval(() => {
+  if (S.user && Date.now() - lastActivity > INACTIVITY_MS) {
+    logout();
+    renderLogin('You have been logged out due to 1 hour of inactivity.');
+  }
+}, 60000);
 const S = {user:null, formData:{}, submissions:{}, currentPage:'login'};
 const root = () => document.getElementById('root');
-const getStores = code => ['Shopify SG', ...SETTINGS.platforms.map(p=>`${p} ${code}`)];
 const mkEmpty   = (sec,code,store,by='') => ({trackingId:'',orderId:'',store,shipTo:code,days:'',status:'',action:'',urgent:false,section:sec,type:'',reason:'',submittedBy:by});
 
 // ── COMBO WIDGET ──────────────────────────────────────────────
@@ -216,6 +238,11 @@ async function doLogin() {
   const p = document.getElementById('lp').value;
   const acct = ACCOUNTS.find(a=>a.username===u && a.password===p);
   if (!acct) { renderLogin('Incorrect username or password.'); return; }
+  await applySession(acct, true);
+}
+
+// Shared logic for login + session restore
+async function applySession(acct, isNewLogin) {
   S.user = acct;
   document.getElementById('nav-username').textContent = acct.name;
   document.getElementById('nav-username').style.display = '';
@@ -224,7 +251,7 @@ async function doLogin() {
   document.getElementById('btn-settings').style.display = '';
   document.getElementById('btn-logout').style.display = '';
 
-  // Show loading while fetching data
+  // Show loading spinner
   root().innerHTML = `
     <div style="min-height:calc(100vh - 52px);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;">
       <div style="width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--teal);border-radius:50%;animation:spin .7s linear infinite;"></div>
@@ -232,10 +259,22 @@ async function doLogin() {
     </div>
     <style>@keyframes spin{to{transform:rotate(360deg);}}</style>`;
 
+  // Restore today's cached submissions from localStorage immediately
+  const cached = LS.get(dataKey());
+  if (cached) S.submissions = cached;
+
+  // Load settings + fresh submissions from Sheets
   if (!DEMO_MODE) {
     await loadSettingsFromSheets();
     await loadSubmissions();
   }
+
+  // Save session to localStorage (persists across page reloads)
+  if (isNewLogin) {
+    LS.set(SESSION_KEY, {username: acct.username, loginTime: Date.now()});
+  }
+
+  lastActivity = Date.now();
   renderDashboard();
 }
 
@@ -381,15 +420,48 @@ async function loadSubmissions() {
   } catch(e) { console.warn('Load failed:', e); }
 }
 
+async function loadSubmissions() {
+  // Always restore from localStorage first (instant, no network)
+  const cached = LS.get(dataKey());
+  if (cached) {
+    S.submissions = cached;
+    Object.entries(cached).forEach(([code,orders])=>{
+      if (!S.formData[code]) S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[]};
+      ['pending','transit','hold'].forEach(sec=>{
+        S.formData[code][sec] = orders.filter(o=>o.section===sec);
+      });
+    });
+  }
+  // Then try Sheets — overwrites cache if successful
+  if (!DEMO_MODE) {
+    try {
+      const res = await fetch(`${SCRIPT_URL}?date=${encodeURIComponent(TODAY)}`, {mode:'cors'});
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.submissions && Object.keys(data.submissions).length >= 0) {
+        S.submissions = data.submissions;
+        LS.set(dataKey(), data.submissions); // update cache with Sheets data
+        Object.entries(data.submissions).forEach(([code,orders])=>{
+          if (!S.formData[code]) S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[]};
+          ['pending','transit','hold'].forEach(sec=>{
+            S.formData[code][sec] = orders.filter(o=>o.section===sec);
+          });
+        });
+      }
+    } catch(e) {
+      console.warn('Sheets fetch failed, using cached data:', e);
+    }
+  }
+}
+
 function submitSection(code) {
   const fd     = S.formData[code];
   const orders = [...fd.pending,...fd.transit,...fd.hold].filter(o=>o.trackingId.trim());
-
-  // 1. Update UI instantly
+  // Update UI and cache instantly
   S.submissions[code] = orders;
+  LS.set(dataKey(), S.submissions);
   renderDashboard();
-
-  // 2. Send to Sheets in background — no waiting
+  // Push to Sheets in background
   pushToSheets({
     action:'submit', date:TODAY, country:code,
     preparedBy:fd.preparedBy, orders,
@@ -717,8 +789,22 @@ function generatePDF(){
   }
 }
 
-// ── INIT ─────────────────────────────────────────────────────
-renderLogin();
+// ── INIT — restore session or show login ──────────────────────
+(async () => {
+  const saved = LS.get(SESSION_KEY);
+  if (saved && saved.username && saved.loginTime) {
+    const age = Date.now() - saved.loginTime;
+    if (age < INACTIVITY_MS) {
+      // Valid session — find account and restore
+      if (!DEMO_MODE) await loadSettingsFromSheets();
+      const acct = ACCOUNTS.find(a=>a.username===saved.username);
+      if (acct) { await applySession(acct, false); return; }
+    }
+    // Session expired
+    LS.del(SESSION_KEY);
+  }
+  renderLogin();
+})();
 </script>
 </body>
 </html>
