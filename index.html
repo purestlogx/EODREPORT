@@ -428,12 +428,14 @@ async function loadSubmissions() {
   const cached = LS.get(dataKey());
   if (cached) {
     S.submissions = cached;
-    Object.entries(cached).forEach(([code,orders])=>{
-      if (!S.formData[code]) S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[]};
-      ['pending','transit','hold'].forEach(sec=>{
-        S.formData[code][sec] = orders.filter(o=>o.section===sec);
+    if (S.currentPage !== 'form') {
+      Object.entries(cached).forEach(([code,orders])=>{
+        if (!S.formData[code]) S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[]};
+        ['pending','transit','hold'].forEach(sec=>{
+          S.formData[code][sec] = orders.filter(o=>o.section===sec);
+        });
       });
-    });
+    }
   }
   // Then try Sheets — overwrites cache if successful
   if (!DEMO_MODE) {
@@ -441,15 +443,17 @@ async function loadSubmissions() {
       const res = await fetch(`${SCRIPT_URL}?date=${encodeURIComponent(TODAY)}`, {mode:'cors'});
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      if (data.submissions && Object.keys(data.submissions).length >= 0) {
+      if (data.submissions) {
         S.submissions = data.submissions;
-        LS.set(dataKey(), data.submissions); // update cache with Sheets data
-        Object.entries(data.submissions).forEach(([code,orders])=>{
-          if (!S.formData[code]) S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[]};
-          ['pending','transit','hold'].forEach(sec=>{
-            S.formData[code][sec] = orders.filter(o=>o.section===sec);
+        LS.set(dataKey(), data.submissions);
+        if (S.currentPage !== 'form') {
+          Object.entries(data.submissions).forEach(([code,orders])=>{
+            if (!S.formData[code]) S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[]};
+            ['pending','transit','hold'].forEach(sec=>{
+              S.formData[code][sec] = orders.filter(o=>o.section===sec);
+            });
           });
-        });
+        }
       }
     } catch(e) {
       console.warn('Sheets fetch failed, using cached data:', e);
@@ -475,17 +479,26 @@ function submitSection(code) {
 // ── FORM ─────────────────────────────────────────────────────
 function selectCountry(code) {
   const ctry = COUNTRIES.find(c=>c.code===code);
-  if (!S.formData[code]) {
-    S.formData[code]={
-      preparedBy:S.user.name,
-      pending:[mkEmpty('pending',code,ctry.store,S.user.name)],
-      transit:[mkEmpty('transit',code,ctry.store,S.user.name)],
-      hold:   [mkEmpty('hold',   code,ctry.store,S.user.name)],
-      backlogs:[{destination:code,store:ctry.store,date:'',count:'',remarks:''}],
+  const fd   = S.formData[code];
+
+  // Initialise form data if missing or empty
+  if (!fd || (!fd.pending?.length && !fd.transit?.length && !fd.hold?.length)) {
+    S.formData[code] = {
+      preparedBy: S.user.name,
+      pending:  [mkEmpty('pending', code, ctry.store, S.user.name)],
+      transit:  [mkEmpty('transit', code, ctry.store, S.user.name)],
+      hold:     [mkEmpty('hold',    code, ctry.store, S.user.name)],
+      backlogs: [{destination:code, store:ctry.store, date:'', count:'', remarks:''}],
     };
   } else {
-    S.formData[code].preparedBy = S.user.name;
+    // Ensure every section has at least one row to show
+    if (!fd.pending  || !fd.pending.length)  fd.pending  = [mkEmpty('pending', code, ctry.store, S.user.name)];
+    if (!fd.transit  || !fd.transit.length)  fd.transit  = [mkEmpty('transit', code, ctry.store, S.user.name)];
+    if (!fd.hold     || !fd.hold.length)     fd.hold     = [mkEmpty('hold',    code, ctry.store, S.user.name)];
+    if (!fd.backlogs || !fd.backlogs.length) fd.backlogs = [{destination:code, store:ctry.store, date:'', count:'', remarks:''}];
+    fd.preparedBy = S.user.name;
   }
+
   renderForm(code);
 }
 
