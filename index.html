@@ -138,7 +138,7 @@ const LS = {
   set: (k,v)=> { try { localStorage.setItem(k,JSON.stringify(v)); } catch(e){}},
   del: k    => { try { localStorage.removeItem(k); } catch(e){}},
 };
-const dataKey = () => `pn_logx_data_${TODAY}`;
+const dataKey = () => `pn_logx_data_${TODAY_ISO}`;
 
 // ── ACTIVITY TRACKING ─────────────────────────────────────────
 ['click','keypress','touchstart'].forEach(ev =>
@@ -352,7 +352,7 @@ async function loadSubmissions() {
   }
   if (!DEMO_MODE) {
     try {
-      const res  = await fetch(`${SCRIPT_URL}?date=${encodeURIComponent(TODAY)}`, {mode:'cors'});
+      const res  = await fetch(`${SCRIPT_URL}?date=${encodeURIComponent(TODAY_ISO)}`, {mode:'cors'});
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       if (data.submissions) {
@@ -628,7 +628,7 @@ function submitSection(code) {
   LS.set(dataKey(), S.submissions);
   renderDashboard();
   pushToSheets({
-    action:'submit', date:TODAY, country:code,
+    action:'submit', date:TODAY_ISO, country:code,
     orders, backlogs:fd.backlogs.filter(b => b.count !== ''),
   });
 }
@@ -861,7 +861,7 @@ function generatePDF() {
   }
 
   doc.save(`Logistics-Report-${TODAY.replace(/\//g,'-')}.pdf`);
-  pushToSheets({action:'log_pdf', date:TODAY, timestamp:new Date().toLocaleString(),
+  pushToSheets({action:'log_pdf', date:TODAY_ISO, timestamp:new Date().toLocaleString(),
     generatedBy:S.user.name,
     sectionsIncluded:Object.keys(S.submissions).map(c=>{const ct=COUNTRIES.find(x=>x.code===c);return ct?ct.label:c;}),
     totalOrders:Object.values(S.submissions).flat().length,
