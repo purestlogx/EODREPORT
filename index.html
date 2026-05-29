@@ -438,7 +438,16 @@ function _drawDashboard() {
 }
 
 async function refreshDashboard() {
-  if (!DEMO_MODE) await loadSubmissions();
+  const btn = document.querySelector('.btn-ghost.btn-sm[onclick="refreshDashboard()"]');
+  if (btn) { btn.textContent = 'Loading...'; btn.disabled = true; }
+  if (!DEMO_MODE) {
+    try {
+      await loadSubmissions();
+      if (btn) { btn.textContent = 'Refreshed!'; setTimeout(() => { btn.textContent = 'Refresh'; btn.disabled = false; }, 1500); }
+    } catch(e) {
+      if (btn) { btn.textContent = 'Failed - try again'; btn.disabled = false; }
+    }
+  }
   _drawDashboard();
 }
 
@@ -601,8 +610,7 @@ function submitSection(code) {
   renderDashboard();
   pushToSheets({
     action:'submit', date:TODAY, country:code,
-    preparedBy:fd.preparedBy, orders,
-    backlogs:fd.backlogs.filter(b => b.count !== ''),
+    orders, backlogs:fd.backlogs.filter(b => b.count !== ''),
   });
 }
 
