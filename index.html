@@ -97,6 +97,7 @@ select:focus,input:focus{border-color:var(--teal);}
 .muted{color:rgba(0,76,79,.45);font-size:12px;}
 .mt1{margin-top:6px;}
 @keyframes spin{to{transform:rotate(360deg);}}
+.spinner{width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--teal);border-radius:50%;animation:spin .7s linear infinite;}
 </style>
 </head>
 <body>
@@ -117,30 +118,31 @@ select:focus,input:focus{border-color:var(--teal);}
 <div id="root"></div>
 
 <script>
-// ── CONFIG (declared first — no other consts above this) ──────
+// ── CONFIG ────────────────────────────────────────────────────
 const SCRIPT_URL    = 'https://script.google.com/macros/s/AKfycbxDLwo-K8zSDT_R1uZEbbqtWto_iL4PhEuQnaKHK4lUTzwgd0wArUPW-lidhU-V9cU9Iw/exec';
 const SHEET_URL     = 'https://docs.google.com/spreadsheets/d/1zh50gtwztshO7ZKi0eJe6xAk63wE7woqo3dguwTgdAI';
 const DEMO_MODE     = false;
 const TODAY         = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'numeric'});
+const TODAY_ISO     = new Date().toISOString().slice(0,10);
 const URGENT_N      = 3;
-const SESSION_KEY   = 'pn_logx_session';
+const SESSION_KEY   = 'pn_session';
 const INACTIVITY_MS = 60 * 60 * 1000;
 
 document.getElementById('nav-date').textContent = TODAY;
 
 // ── STATE ─────────────────────────────────────────────────────
 const S = {user:null, formData:{}, submissions:{}, currentPage:'login'};
-let lastActivity = Date.now();
+let lastActivity    = Date.now();
+let autoRefreshTimer = null;
 
-// ── LOCAL STORAGE HELPER ──────────────────────────────────────
+// ── SESSION STORAGE (login only) ──────────────────────────────
 const LS = {
   get: k    => { try { const v=localStorage.getItem(k); return v?JSON.parse(v):null; } catch(e){ return null; }},
   set: (k,v)=> { try { localStorage.setItem(k,JSON.stringify(v)); } catch(e){}},
   del: k    => { try { localStorage.removeItem(k); } catch(e){}},
 };
-const dataKey = () => `pn_logx_data_${TODAY_ISO}`;
 
-// ── ACTIVITY TRACKING ─────────────────────────────────────────
+// ── ACTIVITY / INACTIVITY ────────────────────────────────────
 ['click','keypress','touchstart'].forEach(ev =>
   document.addEventListener(ev, () => { lastActivity = Date.now(); }, {passive:true})
 );
@@ -176,74 +178,67 @@ let SETTINGS = {
   shipTo:     ['MY','PH','AU','US'],
 };
 
-// ── UTILITY FUNCTIONS (hoisted) ───────────────────────────────
+// ── UTILITY ───────────────────────────────────────────────────
 function getStores(code) {
   return ['Shopify SG', ...SETTINGS.platforms.map(p => `${p} ${code}`)];
 }
 function mkEmpty(sec, code, store, by) {
-  return {trackingId:'', orderId:'', store:store||'', shipTo:code, days:'', status:'',
-          action:'', urgent:false, section:sec, type:'', reason:'', submittedBy:by||''};
+  return {trackingId:'', orderId:'', store:store||'', shipTo:code,
+          days:'', status:'', action:'', urgent:false,
+          section:sec, type:'', reason:'', submittedBy:by||''};
 }
 function root() { return document.getElementById('root'); }
+function showLoading(msg) {
+  root().innerHTML = `<div style="min-height:calc(100vh - 52px);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;">
+    <div class="spinner"></div><p class="muted">${msg||'Loading...'}</p></div>`;
+}
 
-// ── COMBO WIDGET ──────────────────────────────────────────────
+// ── COMBO ─────────────────────────────────────────────────────
 const CB = {}; let cbIdx = 0;
 function combo(arr, val, fn) {
-  const id      = 'cb_' + (cbIdx++);
-  CB[id]        = fn;
+  const id = 'cb_'+(cbIdx++); CB[id] = fn;
   const isOther = !!(val && !arr.includes(val));
-  const selVal  = isOther ? '__other__' : (val || '');
+  const selVal  = isOther ? '__other__' : (val||'');
   return `<div class="combo-wrap">
     <select data-cb="${id}" onchange="comboChange(this)">
       <option value="">Select...</option>
-      ${arr.map(v => `<option value="${v}"${v === selVal ? ' selected' : ''}>${v}</option>`).join('')}
-      <option value="__other__"${isOther ? ' selected' : ''}>Other...</option>
+      ${arr.map(v=>`<option value="${v}"${v===selVal?' selected':''}>${v}</option>`).join('')}
+      <option value="__other__"${isOther?' selected':''}>Other...</option>
     </select>
     <input class="combo-text" type="text" placeholder="Type here..."
-      value="${isOther ? val : ''}" data-cb="${id}"
-      style="display:${isOther ? 'block' : 'none'};" oninput="comboText(this)">
+      value="${isOther?val:''}" data-cb="${id}"
+      style="display:${isOther?'block':'none'};" oninput="comboText(this)">
   </div>`;
 }
 function comboChange(sel) {
-  const wrap = sel.parentElement;
-  const inp  = wrap.querySelector('input.combo-text');
-  const fn   = CB[sel.dataset.cb];
-  if (sel.value === '__other__') { inp.style.display = 'block'; inp.focus(); }
-  else { inp.style.display = 'none'; inp.value = ''; if (fn) fn(sel.value); }
+  const w=sel.parentElement, i=w.querySelector('input.combo-text'), fn=CB[sel.dataset.cb];
+  if (sel.value==='__other__') { i.style.display='block'; i.focus(); }
+  else { i.style.display='none'; i.value=''; if(fn) fn(sel.value); }
 }
-function comboText(inp) { const fn = CB[inp.dataset.cb]; if (fn) fn(inp.value); }
+function comboText(i) { const fn=CB[i.dataset.cb]; if(fn) fn(i.value); }
 
-// ── URGENT DETECTION ─────────────────────────────────────────
+// ── URGENT ────────────────────────────────────────────────────
 function detectUrgent(orders) {
   const flags = new Map();
-  function add(o, reason) {
-    const k = o.trackingId || JSON.stringify(o);
-    if (!flags.has(k)) flags.set(k, {order:o, reasons:[]});
-    if (!flags.get(k).reasons.includes(reason)) flags.get(k).reasons.push(reason);
+  function add(o, r) {
+    const k=o.trackingId||JSON.stringify(o);
+    if (!flags.has(k)) flags.set(k,{order:o,reasons:[]});
+    if (!flags.get(k).reasons.includes(r)) flags.get(k).reasons.push(r);
   }
   orders.forEach(o => {
-    const c = COUNTRIES.find(c => c.code === o.shipTo);
-    if (o.days && parseInt(o.days) > (c ? c.threshold : 10))
-      add(o, `Delayed ${o.days}d (>${c ? c.threshold : 10}d for ${o.shipTo})`);
+    const c=COUNTRIES.find(c=>c.code===o.shipTo);
+    if (o.days && parseInt(o.days)>(c?c.threshold:10))
+      add(o,`Delayed ${o.days}d (>${c?c.threshold:10}d for ${o.shipTo})`);
   });
-  const byCA = {};
-  orders.forEach(o => {
-    if (!o.action) return;
-    const k = `${o.shipTo}||${o.action}`;
-    (byCA[k] = byCA[k] || []).push(o);
+  const byCA={};
+  orders.forEach(o => { if(!o.action)return; const k=`${o.shipTo}||${o.action}`; (byCA[k]=byCA[k]||[]).push(o); });
+  Object.entries(byCA).forEach(([k,ords]) => {
+    if (ords.length>=URGENT_N) { const[c,a]=k.split('||'); ords.forEach(o=>add(o,`${ords.length}x "${a}" in ${c}`)); }
   });
-  Object.entries(byCA).forEach(([k, ords]) => {
-    if (ords.length >= URGENT_N) {
-      const [c, a] = k.split('||');
-      ords.forEach(o => add(o, `${ords.length}x "${a}" in ${c}`));
-    }
-  });
-  const byA = {};
-  orders.forEach(o => { if (!o.action) return; (byA[o.action] = byA[o.action] || []).push(o); });
-  Object.entries(byA).forEach(([a, ords]) => {
-    if (ords.length >= URGENT_N) ords.forEach(o => add(o, `${ords.length}x "${a}" globally`));
-  });
-  orders.forEach(o => { if (o.urgent) add(o, 'Manually flagged'); });
+  const byA={};
+  orders.forEach(o => { if(!o.action)return; (byA[o.action]=byA[o.action]||[]).push(o); });
+  Object.entries(byA).forEach(([a,ords]) => { if(ords.length>=URGENT_N) ords.forEach(o=>add(o,`${ords.length}x "${a}" globally`)); });
+  orders.forEach(o => { if(o.urgent) add(o,'Manually flagged'); });
   return [...flags.values()];
 }
 
@@ -257,7 +252,7 @@ function renderLogin(err) {
           <div class="brand-lg">Purest Nest</div>
           <div class="sub">Daily Logistics Report</div>
         </div>
-        ${err ? `<div class="error-msg">${err}</div>` : ''}
+        ${err?`<div class="error-msg">${err}</div>`:''}
         <div class="form-group">
           <label class="form-label">Username</label>
           <input class="form-input" type="text" id="lu" placeholder="Enter username" autofocus
@@ -274,114 +269,85 @@ function renderLogin(err) {
 }
 
 function doLogin() {
-  const u    = (document.getElementById('lu').value || '').trim().toLowerCase();
+  const u    = (document.getElementById('lu').value||'').trim().toLowerCase();
   const p    = document.getElementById('lp').value;
-  const acct = ACCOUNTS.find(a => a.username === u && a.password === p);
+  const acct = ACCOUNTS.find(a=>a.username===u && a.password===p);
   if (!acct) { renderLogin('Incorrect username or password.'); return; }
   applySession(acct, true);
 }
 
-function applySession(acct, isNew) {
+async function applySession(acct, isNew) {
   S.user = acct;
   document.getElementById('nav-username').textContent = acct.name;
   document.getElementById('nav-username').style.display = '';
-  document.getElementById('nav-role').textContent = acct.role === 'manager' ? 'Manager' : 'PIC';
+  document.getElementById('nav-role').textContent = acct.role==='manager'?'Manager':'PIC';
   document.getElementById('nav-role').style.display = '';
   document.getElementById('btn-settings').style.display = '';
   document.getElementById('btn-logout').style.display = '';
   document.getElementById('btn-sheet').style.display = 'flex';
   document.getElementById('btn-sheet').href = SHEET_URL;
-  if (isNew) LS.set(SESSION_KEY, {username: acct.username, loginTime: Date.now()});
+  if (isNew) LS.set(SESSION_KEY, {username:acct.username, loginTime:Date.now()});
   lastActivity = Date.now();
 
-  // Restore cached submissions instantly
-  const cached = LS.get(dataKey());
-  if (cached) {
-    S.submissions = cached;
-    Object.entries(cached).forEach(([code, orders]) => {
-      if (!S.formData[code]) S.formData[code] = {preparedBy:'', pending:[], transit:[], hold:[], backlogs:[]};
-      ['pending','transit','hold'].forEach(sec => {
-        S.formData[code][sec] = orders.filter(o => o.section === sec);
-      });
-    });
+  showLoading('Loading data...');
+
+  if (!DEMO_MODE) {
+    await loadSettingsFromSheets().catch(()=>{});
+    await loadSubmissions().catch(()=>{});
   }
 
-  // Show dashboard immediately, then sync from Sheets in background
   renderDashboard();
   startAutoRefresh();
-  if (!DEMO_MODE) {
-    loadSettingsFromSheets().catch(() => {});
-    loadSubmissions().then(() => {
-      if (S.user && S.currentPage === 'dashboard') _drawDashboard();
-    }).catch(() => {});
-  }
 }
 
 function logout() {
   stopAutoRefresh();
   LS.del(SESSION_KEY);
-  S.user = null; S.formData = {}; S.submissions = {};
+  S.user=null; S.formData={}; S.submissions={};
   ['nav-username','nav-role','btn-settings','btn-logout','btn-sheet']
-    .forEach(id => document.getElementById(id).style.display = 'none');
+    .forEach(id=>document.getElementById(id).style.display='none');
   renderLogin();
 }
 
-// ── SHEETS API ────────────────────────────────────────────────
+// ── API ───────────────────────────────────────────────────────
 function pushToSheets(payload) {
   if (DEMO_MODE) return;
   fetch(SCRIPT_URL, {
-    method:  'POST',
-    mode:    'no-cors',
-    headers: {'Content-Type': 'text/plain;charset=UTF-8'},
-    body:    JSON.stringify(payload),
-  }).catch(e => console.warn('Sheets sync failed:', e));
+    method:'POST', mode:'no-cors',
+    headers:{'Content-Type':'text/plain;charset=UTF-8'},
+    body:JSON.stringify(payload),
+  }).catch(e=>console.warn('Push failed:',e));
 }
 
 async function loadSubmissions() {
-  const cached = LS.get(dataKey());
-  if (cached) {
-    S.submissions = cached;
-    if (S.currentPage !== 'form') {
-      Object.entries(cached).forEach(([code, orders]) => {
-        if (!S.formData[code]) S.formData[code] = {preparedBy:'', pending:[], transit:[], hold:[], backlogs:[]};
-        ['pending','transit','hold'].forEach(sec => {
-          S.formData[code][sec] = orders.filter(o => o.section === sec);
-        });
-      });
-    }
-  }
-  if (!DEMO_MODE) {
-    try {
-      const res  = await fetch(`${SCRIPT_URL}?date=${encodeURIComponent(TODAY_ISO)}`, {mode:'cors'});
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
-      if (data.submissions) {
-        S.submissions = data.submissions;
-        LS.set(dataKey(), data.submissions);
-        if (S.currentPage !== 'form') {
-          Object.entries(data.submissions).forEach(([code, orders]) => {
-            if (!S.formData[code]) S.formData[code] = {preparedBy:'', pending:[], transit:[], hold:[], backlogs:[]};
-            ['pending','transit','hold'].forEach(sec => {
-              S.formData[code][sec] = orders.filter(o => o.section === sec);
-            });
+  if (DEMO_MODE) return;
+  try {
+    const res  = await fetch(`${SCRIPT_URL}?date=${encodeURIComponent(TODAY_ISO)}`, {mode:'cors'});
+    if (!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json();
+    if (data.submissions) {
+      S.submissions = data.submissions;
+      if (S.currentPage !== 'form') {
+        Object.entries(data.submissions).forEach(([code,orders]) => {
+          if (!S.formData[code]) S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[]};
+          ['pending','transit','hold'].forEach(sec => {
+            S.formData[code][sec] = orders.filter(o=>o.section===sec);
           });
-        }
+        });
       }
-    } catch(e) { console.warn('Sheets fetch failed:', e); }
-  }
+    }
+  } catch(e) { console.warn('loadSubmissions failed:',e); }
 }
 
 async function loadSettingsFromSheets() {
   if (DEMO_MODE) return;
   try {
     const res  = await fetch(`${SCRIPT_URL}?action=get_settings`, {mode:'cors'});
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (!res.ok) throw new Error('HTTP '+res.status);
     const data = await res.json();
-    if (data.settings && Object.keys(data.settings).length > 0)
-      SETTINGS = {...SETTINGS, ...data.settings};
-    if (data.accounts && data.accounts.length > 0)
-      ACCOUNTS = data.accounts;
-  } catch(e) { console.warn('Settings fetch failed:', e); }
+    if (data.settings && Object.keys(data.settings).length>0) SETTINGS={...SETTINGS,...data.settings};
+    if (data.accounts && data.accounts.length>0) ACCOUNTS=data.accounts;
+  } catch(e) { console.warn('loadSettings failed:',e); }
 }
 
 function saveSettingsToSheets() {
@@ -389,24 +355,21 @@ function saveSettingsToSheets() {
 }
 
 // ── AUTO REFRESH ──────────────────────────────────────────────
-let autoRefreshTimer = null;
-
 function startAutoRefresh() {
   stopAutoRefresh();
   autoRefreshTimer = setInterval(async () => {
-    if (!S.user || DEMO_MODE) return;
-    if (S.currentPage !== 'dashboard') return; // only refresh on dashboard
-    await loadSubmissions();
-    _drawDashboard();
-  }, 30000); // every 30 seconds
+    if (!S.user || S.currentPage!=='dashboard') return;
+    await loadSubmissions().catch(()=>{});
+    if (S.currentPage==='dashboard') _drawDashboard();
+  }, 30000);
+}
+function stopAutoRefresh() {
+  if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer=null; }
 }
 
-function stopAutoRefresh() {
-  if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
-}
+// ── DASHBOARD ────────────────────────────────────────────────
 function renderDashboard() {
   S.currentPage = 'dashboard';
-  startAutoRefresh();
   _drawDashboard();
 }
 
@@ -424,64 +387,57 @@ function _drawDashboard() {
         <p class="muted">${TODAY} &nbsp;·&nbsp; Welcome back, <strong>${S.user.name}</strong> &nbsp;·&nbsp; Click a country to fill</p>
       </div>
       <div class="status-grid">
-        ${COUNTRIES.map(c => {
-          const done = submitted.includes(c.code);
+        ${COUNTRIES.map(c=>{
+          const done=submitted.includes(c.code);
           return `<div class="sc" onclick="selectCountry('${c.code}')">
             <div class="sc-dot" style="background:${c.color};">${c.code}</div>
             <div class="sc-label">${c.label}</div>
             <div class="sc-store">${c.store}</div>
-            <span class="dot ${done ? 'dot-done' : 'dot-pend'}"></span>
-            <div class="slabel" style="color:${done ? '#16a34a' : '#d97706'}">${done ? 'Submitted' : 'Pending'}</div>
+            <span class="dot ${done?'dot-done':'dot-pend'}"></span>
+            <div class="slabel" style="color:${done?'#16a34a':'#d97706'}">${done?'Submitted':'Pending'}</div>
           </div>`;
         }).join('')}
       </div>
-      ${urgent.length > 0 ? `
+      ${urgent.length>0 ? `
         <div class="urgent-box">
           <div class="urgent-title">!! Urgent Issues (${urgent.length})</div>
-          ${urgent.map(u => `<div class="urgent-item">
-            <strong>${u.order.trackingId || '—'}</strong>${u.order.orderId ? ` / ${u.order.orderId}` : ''}
-            <span class="muted"> · ${u.order.shipTo || ''}</span>
-            ${u.order.urgent ? '<span style="background:var(--danger-bg);color:var(--danger);font-size:10px;padding:1px 6px;border-radius:20px;margin-left:5px;">Manual</span>' : ''}
+          ${urgent.map(u=>`<div class="urgent-item">
+            <strong>${u.order.trackingId||'—'}</strong>${u.order.orderId?` / ${u.order.orderId}`:''}
+            <span class="muted"> · ${u.order.shipTo||''}</span>
+            ${u.order.urgent?'<span style="background:var(--danger-bg);color:var(--danger);font-size:10px;padding:1px 6px;border-radius:20px;margin-left:5px;">Manual</span>':''}
             <br><span style="font-size:11px;color:#991b1b;">${u.reasons.join(' | ')}</span>
           </div>`).join('')}
-        </div>` : allOrders.length > 0 ? `<div class="alert alert-ok">No urgent issues detected</div>` : ''}
-      ${pendingCnt > 0 ? `<div class="pending-banner">⏳ ${pendingCnt} section${pendingCnt > 1 ? 's' : ''} still pending</div>` : ''}
+        </div>` : allOrders.length>0 ? `<div class="alert alert-ok">No urgent issues detected</div>` : ''}
+      ${pendingCnt>0 ? `<div class="pending-banner">⏳ ${pendingCnt} section${pendingCnt>1?'s':''} still pending</div>` : ''}
       <div class="flex gap2 items-c" style="margin-bottom:1.5rem;flex-wrap:wrap;">
-        <button class="btn btn-pdf" onclick="generatePDF()" ${allOrders.length === 0 ? 'disabled' : ''}>Download PDF</button>
-        <button class="btn btn-ghost btn-sm" onclick="refreshDashboard()">Refresh</button>
-        ${pendingCnt > 0 && allOrders.length > 0 ? `<span class="muted" style="font-size:11px;">PDF includes submitted sections only</span>` : ''}
+        <button class="btn btn-pdf" onclick="generatePDF()" ${allOrders.length===0?'disabled':''}>Download PDF</button>
+        <button class="btn btn-ghost btn-sm" id="refresh-btn" onclick="refreshDashboard()">Refresh</button>
+        ${pendingCnt>0&&allOrders.length>0?`<span class="muted" style="font-size:11px;">PDF includes submitted sections only</span>`:''}
       </div>
-      ${allOrders.length > 0 ? renderPreview(allOrders) : `<div class="alert alert-info">No submissions yet. Click a country above to start.</div>`}
+      ${allOrders.length>0 ? renderPreview(allOrders) : `<div class="alert alert-info">No submissions yet. Click a country above to start.</div>`}
     </div>`;
 }
 
 async function refreshDashboard() {
-  const btn = document.querySelector('.btn-ghost.btn-sm[onclick="refreshDashboard()"]');
-  if (btn) { btn.textContent = 'Loading...'; btn.disabled = true; }
-  if (!DEMO_MODE) {
-    try {
-      await loadSubmissions();
-      if (btn) { btn.textContent = 'Refreshed!'; setTimeout(() => { btn.textContent = 'Refresh'; btn.disabled = false; }, 1500); }
-    } catch(e) {
-      if (btn) { btn.textContent = 'Failed - try again'; btn.disabled = false; }
-    }
-  }
+  const btn = document.getElementById('refresh-btn');
+  if (btn) { btn.textContent='Loading...'; btn.disabled=true; }
+  await loadSubmissions().catch(()=>{});
   _drawDashboard();
 }
 
 function renderPreview(orders) {
-  return [{key:'pending',label:'Pending Pick Up'},{key:'transit',label:'In Transit Delays'},{key:'hold',label:'On Hold / Returns'}].map(d => {
-    const rows = orders.filter(o => o.section === d.key);
+  return [{key:'pending',label:'Pending Pick Up'},{key:'transit',label:'In Transit Delays'},{key:'hold',label:'On Hold / Returns'}].map(d=>{
+    const rows=orders.filter(o=>o.section===d.key);
     if (!rows.length) return '';
     return `<div class="card" style="padding:1rem;">
       <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">${d.label} <span class="muted">(${rows.length})</span></div>
       <div style="overflow-x:auto;"><table class="otbl">
         <thead><tr><th>Tracking ID</th><th>Order ID</th><th>Ship To</th><th>Days</th><th>Status</th><th>Action</th><th>By</th></tr></thead>
-        <tbody>${rows.map(o => `<tr class="${o.urgent ? 'row-urgent' : ''}">
-          <td style="font-family:monospace;font-size:10.5px;">${o.trackingId || '—'}</td>
-          <td>${o.orderId || '—'}</td><td>${o.shipTo}</td><td>${o.days || '—'}</td>
-          <td>${o.status || '—'}</td><td>${o.action || '—'}</td>
-          <td class="by-cell">${o.submittedBy || '—'}</td>
+        <tbody>${rows.map(o=>`<tr class="${o.urgent?'row-urgent':''}">
+          <td style="font-family:monospace;font-size:10.5px;">${o.trackingId||'—'}</td>
+          <td>${o.orderId||'—'}</td><td>${o.shipTo}</td><td>${o.days||'—'}</td>
+          <td>${o.status||'—'}</td><td>${o.action||'—'}</td>
+          <td class="by-cell">${o.submittedBy||'—'}</td>
         </tr>`).join('')}</tbody>
       </table></div>
     </div>`;
@@ -490,22 +446,22 @@ function renderPreview(orders) {
 
 // ── FORM ─────────────────────────────────────────────────────
 function selectCountry(code) {
-  const ctry = COUNTRIES.find(c => c.code === code);
+  const ctry = COUNTRIES.find(c=>c.code===code);
   if (!ctry) return;
   const fd = S.formData[code];
   if (!fd || (!fd.pending.length && !fd.transit.length && !fd.hold.length)) {
     S.formData[code] = {
       preparedBy: S.user.name,
-      pending:  [mkEmpty('pending', code, ctry.store, S.user.name)],
-      transit:  [mkEmpty('transit', code, ctry.store, S.user.name)],
-      hold:     [mkEmpty('hold',    code, ctry.store, S.user.name)],
-      backlogs: [{destination:code, store:ctry.store, date:'', count:'', remarks:''}],
+      pending:  [mkEmpty('pending',code,ctry.store,S.user.name)],
+      transit:  [mkEmpty('transit',code,ctry.store,S.user.name)],
+      hold:     [mkEmpty('hold',   code,ctry.store,S.user.name)],
+      backlogs: [{destination:code,store:ctry.store,date:'',count:'',remarks:''}],
     };
   } else {
-    if (!fd.pending.length)  fd.pending  = [mkEmpty('pending', code, ctry.store, S.user.name)];
-    if (!fd.transit.length)  fd.transit  = [mkEmpty('transit', code, ctry.store, S.user.name)];
-    if (!fd.hold.length)     fd.hold     = [mkEmpty('hold',    code, ctry.store, S.user.name)];
-    if (!fd.backlogs.length) fd.backlogs = [{destination:code, store:ctry.store, date:'', count:'', remarks:''}];
+    if (!fd.pending.length)  fd.pending  = [mkEmpty('pending',code,ctry.store,S.user.name)];
+    if (!fd.transit.length)  fd.transit  = [mkEmpty('transit',code,ctry.store,S.user.name)];
+    if (!fd.hold.length)     fd.hold     = [mkEmpty('hold',   code,ctry.store,S.user.name)];
+    if (!fd.backlogs.length) fd.backlogs = [{destination:code,store:ctry.store,date:'',count:'',remarks:''}];
     fd.preparedBy = S.user.name;
   }
   renderForm(code);
@@ -513,42 +469,41 @@ function selectCountry(code) {
 
 function renderForm(code) {
   S.currentPage = 'form';
-  stopAutoRefresh(); // pause while filling form to avoid interruptions
-  const ctry   = COUNTRIES.find(c => c.code === code);
+  stopAutoRefresh();
+  const ctry   = COUNTRIES.find(c=>c.code===code);
   const fd     = S.formData[code];
   const stores = getStores(code);
 
   function mkRow(o, idx, sec) {
-    const isPU   = sec === 'pending';
-    const isHold = sec === 'hold';
-    function cb(field, arr, val) { return combo(arr, val, v => upd(code, sec, idx, field, v)); }
-    return `<tr class="${o.urgent ? 'row-urgent' : ''}">
+    const isPU=sec==='pending', isHold=sec==='hold';
+    function cb(field,arr,val) { return combo(arr,val,v=>upd(code,sec,idx,field,v)); }
+    return `<tr class="${o.urgent?'row-urgent':''}">
       <td><input type="text" value="${o.trackingId}" placeholder="Tracking ID" oninput="upd('${code}','${sec}',${idx},'trackingId',this.value)"></td>
       <td><input type="text" value="${o.orderId}" placeholder="Order ID" oninput="upd('${code}','${sec}',${idx},'orderId',this.value)"></td>
-      <td>${cb('store', stores, o.store || ctry.store)}</td>
-      <td>${cb('shipTo', SETTINGS.shipTo, o.shipTo || code)}</td>
+      <td>${cb('store',stores,o.store||ctry.store)}</td>
+      <td>${cb('shipTo',SETTINGS.shipTo,o.shipTo||code)}</td>
       ${isHold
-        ? `<td>${cb('type', SETTINGS.types, o.type || '')}</td><td>${cb('reason', SETTINGS.reasons, o.reason || '')}</td>`
-        : `<td><input type="number" value="${o.days || ''}" placeholder="Days" min="0" style="width:55px;" oninput="upd('${code}','${sec}',${idx},'days',this.value)"></td>
-           <td>${cb('status', isPU ? SETTINGS.puStatuses : SETTINGS.statuses, o.status || '')}</td>`}
-      <td>${cb('action', SETTINGS.actions, o.action || '')}</td>
-      <td class="by-cell">${o.submittedBy || S.user.name}</td>
-      <td style="text-align:center;"><input type="checkbox" ${o.urgent ? 'checked' : ''} style="width:14px;height:14px;cursor:pointer;accent-color:var(--danger);" onchange="upd('${code}','${sec}',${idx},'urgent',this.checked)"></td>
+        ?`<td>${cb('type',SETTINGS.types,o.type||'')}</td><td>${cb('reason',SETTINGS.reasons,o.reason||'')}</td>`
+        :`<td><input type="number" value="${o.days||''}" placeholder="Days" min="0" style="width:55px;" oninput="upd('${code}','${sec}',${idx},'days',this.value)"></td>
+           <td>${cb('status',isPU?SETTINGS.puStatuses:SETTINGS.statuses,o.status||'')}</td>`}
+      <td>${cb('action',SETTINGS.actions,o.action||'')}</td>
+      <td class="by-cell">${o.submittedBy||S.user.name}</td>
+      <td style="text-align:center;"><input type="checkbox" ${o.urgent?'checked':''} style="width:14px;height:14px;cursor:pointer;accent-color:var(--danger);" onchange="upd('${code}','${sec}',${idx},'urgent',this.checked)"></td>
       <td><button class="btn-del" onclick="delOrder('${code}','${sec}',${idx})">X</button></td>
     </tr>`;
   }
 
   function mkSec(sec, label, note) {
-    const isHold = sec === 'hold';
+    const isHold=sec==='hold';
     return `<div style="margin-bottom:1.5rem;">
       <div class="sec-hdr"><span>${label}</span><span class="sec-note">${note}</span></div>
       <div style="overflow-x:auto;"><table class="otbl" style="min-width:680px;">
         <thead><tr>
           <th>Tracking ID</th><th>Order ID</th><th>Store</th><th>Ship To</th>
-          ${isHold ? '<th>Type</th><th>Reason</th>' : '<th>Days</th><th>Status</th>'}
+          ${isHold?'<th>Type</th><th>Reason</th>':'<th>Days</th><th>Status</th>'}
           <th>Action Taken</th><th>By</th><th>!</th><th></th>
         </tr></thead>
-        <tbody>${fd[sec].map((o, i) => mkRow(o, i, sec)).join('')}</tbody>
+        <tbody>${fd[sec].map((o,i)=>mkRow(o,i,sec)).join('')}</tbody>
       </table></div>
       <button class="btn btn-ghost btn-sm mt1" onclick="addOrder('${code}','${sec}')">+ Add order</button>
     </div>`;
@@ -557,26 +512,23 @@ function renderForm(code) {
   root().innerHTML = `
     <div class="wrap">
       <div class="flex items-c gap2" style="margin-bottom:1.25rem;">
-        <button class="btn btn-ghost btn-sm" onclick="renderDashboard()">Back</button>
-        <div>
-          <h2>${ctry.label}</h2>
-          <p class="muted" style="margin-top:2px;">Submitting as <strong>${S.user.name}</strong></p>
-        </div>
+        <button class="btn btn-ghost btn-sm" onclick="renderDashboard();startAutoRefresh();">Back</button>
+        <div><h2>${ctry.label}</h2><p class="muted" style="margin-top:2px;">Submitting as <strong>${S.user.name}</strong></p></div>
       </div>
       <div class="card">
-        ${mkSec('pending', '1 · Pending Pick Up', '> 1 day')}
-        ${mkSec('transit', '2 · In Transit Delays', 'MY/SG > 5 days · PH/AU/US > 10 days')}
-        ${mkSec('hold', '3 · On Hold / Returns', '')}
+        ${mkSec('pending','1 · Pending Pick Up','> 1 day')}
+        ${mkSec('transit','2 · In Transit Delays','MY/SG > 5 days · PH/AU/US > 10 days')}
+        ${mkSec('hold','3 · On Hold / Returns','')}
         <div style="margin-bottom:1.5rem;">
           <div class="sec-hdr"><span>4 · Order Backlogs</span></div>
           <div style="overflow-x:auto;"><table class="otbl" style="min-width:480px;">
             <thead><tr><th>Destination</th><th>Store</th><th>Date</th><th>Order Count</th><th>Remarks</th><th></th></tr></thead>
-            <tbody>${fd.backlogs.map((b, i) => `<tr>
-              <td>${combo(SETTINGS.shipTo, b.destination || code, v => updB(code, i, 'destination', v))}</td>
-              <td>${combo(stores, b.store || ctry.store, v => updB(code, i, 'store', v))}</td>
+            <tbody>${fd.backlogs.map((b,i)=>`<tr>
+              <td>${combo(SETTINGS.shipTo,b.destination||code,v=>updB(code,i,'destination',v))}</td>
+              <td>${combo(stores,b.store||ctry.store,v=>updB(code,i,'store',v))}</td>
               <td><input type="text" value="${b.date}" placeholder="DD/MM" style="width:65px;" oninput="updB('${code}',${i},'date',this.value)"></td>
               <td><input type="number" value="${b.count}" placeholder="0" min="0" style="width:65px;" oninput="updB('${code}',${i},'count',this.value)"></td>
-              <td>${combo(SETTINGS.blogRemarks, b.remarks || '', v => updB(code, i, 'remarks', v))}</td>
+              <td>${combo(SETTINGS.blogRemarks,b.remarks||'',v=>updB(code,i,'remarks',v))}</td>
               <td><button class="btn-del" onclick="delBlog('${code}',${i})">X</button></td>
             </tr>`).join('')}</tbody>
           </table></div>
@@ -584,53 +536,41 @@ function renderForm(code) {
         </div>
         <hr class="divider">
         <div class="flex gap2">
-          <button class="btn btn-primary" onclick="submitSection('${code}')">Submit section</button>
-          <button class="btn btn-ghost" onclick="renderDashboard()">Cancel</button>
+          <button class="btn btn-primary" id="submit-btn" onclick="submitSection('${code}')">Submit section</button>
+          <button class="btn btn-ghost" onclick="renderDashboard();startAutoRefresh();">Cancel</button>
         </div>
       </div>
     </div>`;
 }
 
-function upd(code, sec, idx, field, val) {
-  if (S.formData[code] && S.formData[code][sec]) S.formData[code][sec][idx][field] = val;
-}
-function updB(code, idx, field, val) {
-  if (S.formData[code] && S.formData[code].backlogs) S.formData[code].backlogs[idx][field] = val;
-}
-function addOrder(code, sec) {
-  const ctry = COUNTRIES.find(c => c.code === code);
-  S.formData[code][sec].push(mkEmpty(sec, code, ctry.store, S.user.name));
-  renderForm(code);
-}
-function delOrder(code, sec, idx) {
-  S.formData[code][sec].splice(idx, 1);
-  if (!S.formData[code][sec].length) {
-    const ctry = COUNTRIES.find(c => c.code === code);
-    S.formData[code][sec].push(mkEmpty(sec, code, ctry.store, S.user.name));
-  }
-  renderForm(code);
-}
-function addBlog(code) {
-  S.formData[code].backlogs.push({destination:code, store:'', date:'', count:'', remarks:''});
-  renderForm(code);
-}
-function delBlog(code, idx) {
-  S.formData[code].backlogs.splice(idx, 1);
-  if (!S.formData[code].backlogs.length)
-    S.formData[code].backlogs.push({destination:code, store:'', date:'', count:'', remarks:''});
-  renderForm(code);
-}
+function upd(code,sec,idx,field,val){if(S.formData[code]&&S.formData[code][sec])S.formData[code][sec][idx][field]=val;}
+function updB(code,idx,field,val){if(S.formData[code]&&S.formData[code].backlogs)S.formData[code].backlogs[idx][field]=val;}
+function addOrder(code,sec){const c=COUNTRIES.find(c=>c.code===code);S.formData[code][sec].push(mkEmpty(sec,code,c.store,S.user.name));renderForm(code);}
+function delOrder(code,sec,idx){S.formData[code][sec].splice(idx,1);if(!S.formData[code][sec].length){const c=COUNTRIES.find(c=>c.code===code);S.formData[code][sec].push(mkEmpty(sec,code,c.store,S.user.name));}renderForm(code);}
+function addBlog(code){S.formData[code].backlogs.push({destination:code,store:'',date:'',count:'',remarks:''});renderForm(code);}
+function delBlog(code,idx){S.formData[code].backlogs.splice(idx,1);if(!S.formData[code].backlogs.length)S.formData[code].backlogs.push({destination:code,store:'',date:'',count:'',remarks:''});renderForm(code);}
 
-function submitSection(code) {
+async function submitSection(code) {
+  const btn = document.getElementById('submit-btn');
+  if (btn) { btn.textContent='Submitting...'; btn.disabled=true; }
   const fd     = S.formData[code];
-  const orders = [...fd.pending, ...fd.transit, ...fd.hold].filter(o => o.trackingId.trim());
+  const orders = [...fd.pending,...fd.transit,...fd.hold].filter(o=>o.trackingId.trim());
+
+  // Update local state immediately
   S.submissions[code] = orders;
-  LS.set(dataKey(), S.submissions);
-  renderDashboard();
+
+  // Push to Sheets
   pushToSheets({
     action:'submit', date:TODAY_ISO, country:code,
-    orders, backlogs:fd.backlogs.filter(b => b.count !== ''),
+    preparedBy:S.user.name, orders,
+    backlogs:fd.backlogs.filter(b=>b.count!==''),
   });
+
+  // Wait 3s for Sheets to process, then reload
+  await new Promise(r=>setTimeout(r,3000));
+  await loadSubmissions().catch(()=>{});
+  renderDashboard();
+  startAutoRefresh();
 }
 
 // ── SETTINGS ─────────────────────────────────────────────────
@@ -646,21 +586,21 @@ const SETTING_DEFS = [
 ];
 
 function renderSettings() {
-  S.currentPage = 'settings';
-  root().innerHTML = `
+  S.currentPage='settings';
+  root().innerHTML=`
     <div class="wrap">
       <div class="flex items-c gap2" style="margin-bottom:1.5rem;">
-        <button class="btn btn-ghost btn-sm" onclick="renderDashboard()">Back</button>
+        <button class="btn btn-ghost btn-sm" onclick="renderDashboard();startAutoRefresh();">Back</button>
         <div><h2>Settings</h2><p class="muted" style="margin-top:2px;">Manage dropdown lists and user accounts</p></div>
         <button class="btn btn-primary btn-sm" style="margin-left:auto;" onclick="saveAndConfirm()">Save Settings</button>
       </div>
       <div class="settings-grid">
-        ${SETTING_DEFS.map(def => `
+        ${SETTING_DEFS.map(def=>`
           <div class="setting-card">
             <h3 style="margin-bottom:4px;">${def.label}</h3>
             <p class="muted" style="font-size:11px;margin-bottom:10px;">${def.hint}</p>
             <div class="tag-list">
-              ${SETTINGS[def.key].map((v, i) => `<span class="tag">${v}<button onclick="removeTag('${def.key}',${i})">x</button></span>`).join('')}
+              ${SETTINGS[def.key].map((v,i)=>`<span class="tag">${v}<button onclick="removeTag('${def.key}',${i})">x</button></span>`).join('')}
             </div>
             <div class="add-tag-row">
               <input type="text" id="new-${def.key}" placeholder="Add new..." onkeydown="if(event.key==='Enter')addTag('${def.key}')">
@@ -668,7 +608,7 @@ function renderSettings() {
             </div>
           </div>`).join('')}
       </div>
-      ${S.user.role === 'manager' ? `
+      ${S.user.role==='manager'?`
         <div>
           <div class="flex items-c gap2" style="margin-bottom:1rem;">
             <h2>User Management</h2>
@@ -677,191 +617,160 @@ function renderSettings() {
           <div class="card" style="padding:0;overflow:hidden;">
             <table class="um-table">
               <thead><tr><th>Name</th><th>Username</th><th>Password</th><th>Role</th><th></th></tr></thead>
-              <tbody>
-                ${ACCOUNTS.map((a, i) => `<tr>
-                  <td><strong>${a.name}</strong></td>
-                  <td style="font-family:monospace;font-size:12px;">${a.username}</td>
-                  <td style="font-family:monospace;font-size:12px;color:rgba(0,76,79,.4);">........</td>
-                  <td><span class="role-pill ${a.role === 'manager' ? 'role-manager' : 'role-pic'}">${a.role === 'manager' ? 'Manager' : 'PIC'}</span></td>
-                  <td style="text-align:right;">
-                    <div class="flex gap2" style="justify-content:flex-end;">
-                      <button class="btn btn-ghost btn-sm" onclick="showUserModal(${i})">Edit</button>
-                      ${a.username !== S.user.username
-                        ? `<button class="btn-del" onclick="deleteUser(${i})">Delete</button>`
-                        : `<span class="muted" style="font-size:11px;">You</span>`}
-                    </div>
-                  </td>
-                </tr>`).join('')}
-              </tbody>
+              <tbody>${ACCOUNTS.map((a,i)=>`<tr>
+                <td><strong>${a.name}</strong></td>
+                <td style="font-family:monospace;font-size:12px;">${a.username}</td>
+                <td style="font-family:monospace;font-size:12px;color:rgba(0,76,79,.4);">........</td>
+                <td><span class="role-pill ${a.role==='manager'?'role-manager':'role-pic'}">${a.role==='manager'?'Manager':'PIC'}</span></td>
+                <td style="text-align:right;">
+                  <div class="flex gap2" style="justify-content:flex-end;">
+                    <button class="btn btn-ghost btn-sm" onclick="showUserModal(${i})">Edit</button>
+                    ${a.username!==S.user.username?`<button class="btn-del" onclick="deleteUser(${i})">Delete</button>`:`<span class="muted" style="font-size:11px;">You</span>`}
+                  </div>
+                </td>
+              </tr>`).join('')}</tbody>
             </table>
           </div>
-        </div>` : ''}
+        </div>`:''}
     </div>`;
 }
 
-function addTag(key) {
-  const inp = document.getElementById('new-' + key);
-  const v   = inp.value.trim();
-  if (!v || SETTINGS[key].includes(v)) return;
-  SETTINGS[key].push(v); inp.value = ''; renderSettings();
-}
-function removeTag(key, idx) {
-  if (SETTINGS[key].length <= 1) { alert('At least one item required.'); return; }
-  SETTINGS[key].splice(idx, 1); renderSettings();
-}
-function saveAndConfirm() {
+function addTag(key){const i=document.getElementById('new-'+key);const v=i.value.trim();if(!v||SETTINGS[key].includes(v))return;SETTINGS[key].push(v);i.value='';renderSettings();}
+function removeTag(key,idx){if(SETTINGS[key].length<=1){alert('At least one item required.');return;}SETTINGS[key].splice(idx,1);renderSettings();}
+function saveAndConfirm(){
   saveSettingsToSheets();
-  const btn = document.querySelector('.btn-primary[onclick="saveAndConfirm()"]');
-  if (btn) { btn.textContent = 'Saved!'; btn.style.background = 'var(--ok)'; setTimeout(() => { btn.textContent = 'Save Settings'; btn.style.background = ''; }, 2000); }
+  const btn=document.querySelector('.btn-primary[onclick="saveAndConfirm()"]');
+  if(btn){btn.textContent='Saved!';btn.style.background='var(--ok)';setTimeout(()=>{btn.textContent='Save Settings';btn.style.background='';},2000);}
 }
 
-// ── USER MANAGEMENT ──────────────────────────────────────────
-function showUserModal(idx) {
-  const isEdit = idx !== undefined && idx !== null;
-  const a      = isEdit ? ACCOUNTS[idx] : {name:'', username:'', password:'', role:'pic'};
-  const el     = document.createElement('div');
-  el.className = 'modal-overlay'; el.id = 'um-modal';
-  el.innerHTML = `<div class="modal">
-    <h3>${isEdit ? 'Edit user' : 'Add new user'}</h3>
-    <div class="form-group" style="margin-bottom:.85rem;"><label class="form-label">Full name</label><input class="form-input" id="um-name" type="text" value="${a.name}" placeholder="e.g. Rose"></div>
-    <div class="form-group" style="margin-bottom:.85rem;"><label class="form-label">Username</label><input class="form-input" id="um-user" type="text" value="${a.username}" placeholder="e.g. rose"></div>
-    <div class="form-group" style="margin-bottom:.85rem;"><label class="form-label">${isEdit ? 'New password (leave blank to keep)' : 'Password'}</label><input class="form-input" id="um-pass" type="password" placeholder="${isEdit ? 'Leave blank to keep' : 'Set password'}"></div>
+function showUserModal(idx){
+  const isEdit=idx!==undefined&&idx!==null;
+  const a=isEdit?ACCOUNTS[idx]:{name:'',username:'',password:'',role:'pic'};
+  const el=document.createElement('div');el.className='modal-overlay';el.id='um-modal';
+  el.innerHTML=`<div class="modal">
+    <h3>${isEdit?'Edit user':'Add new user'}</h3>
+    <div class="form-group" style="margin-bottom:.85rem;"><label class="form-label">Full name</label><input class="form-input" id="um-name" type="text" value="${a.name}"></div>
+    <div class="form-group" style="margin-bottom:.85rem;"><label class="form-label">Username</label><input class="form-input" id="um-user" type="text" value="${a.username}"></div>
+    <div class="form-group" style="margin-bottom:.85rem;"><label class="form-label">${isEdit?'New password (leave blank to keep)':'Password'}</label><input class="form-input" id="um-pass" type="password"></div>
     <div class="form-group" style="margin-bottom:.85rem;"><label class="form-label">Role</label>
       <select class="form-input" id="um-role">
-        <option value="pic"${a.role === 'pic' ? ' selected' : ''}>PIC</option>
-        <option value="manager"${a.role === 'manager' ? ' selected' : ''}>Manager</option>
+        <option value="pic"${a.role==='pic'?' selected':''}>PIC</option>
+        <option value="manager"${a.role==='manager'?' selected':''}>Manager</option>
       </select></div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="saveUser(${isEdit ? idx : 'null'})">Save</button>
-    </div>
-  </div>`;
+      <button class="btn btn-primary" onclick="saveUser(${isEdit?idx:'null'})">Save</button>
+    </div></div>`;
   document.body.appendChild(el);
-  el.addEventListener('click', e => { if (e.target === el) closeModal(); });
+  el.addEventListener('click',e=>{if(e.target===el)closeModal();});
   document.getElementById('um-name').focus();
 }
-function saveUser(idx) {
-  const name     = document.getElementById('um-name').value.trim();
-  const username = document.getElementById('um-user').value.trim().toLowerCase();
-  const password = document.getElementById('um-pass').value;
-  const role     = document.getElementById('um-role').value;
-  if (!name || !username) { alert('Name and username are required.'); return; }
-  if (ACCOUNTS.findIndex((a, i) => a.username === username && i !== idx) > -1) { alert('Username already exists.'); return; }
-  if (idx === null) {
-    if (!password) { alert('Password required for new users.'); return; }
-    ACCOUNTS.push({name, username, password, role});
-  } else {
-    ACCOUNTS[idx] = {name, username, password: password || ACCOUNTS[idx].password, role};
-    if (S.user.username === username) S.user = {...S.user, name, role};
-  }
-  closeModal(); renderSettings();
+function saveUser(idx){
+  const name=document.getElementById('um-name').value.trim();
+  const username=document.getElementById('um-user').value.trim().toLowerCase();
+  const password=document.getElementById('um-pass').value;
+  const role=document.getElementById('um-role').value;
+  if(!name||!username){alert('Name and username are required.');return;}
+  if(ACCOUNTS.findIndex((a,i)=>a.username===username&&i!==idx)>-1){alert('Username already exists.');return;}
+  if(idx===null){if(!password){alert('Password required.');return;}ACCOUNTS.push({name,username,password,role});}
+  else{ACCOUNTS[idx]={name,username,password:password||ACCOUNTS[idx].password,role};if(S.user.username===username)S.user={...S.user,name,role};}
+  closeModal();renderSettings();
 }
-function deleteUser(idx) {
-  if (!confirm(`Delete "${ACCOUNTS[idx].name}"?`)) return;
-  ACCOUNTS.splice(idx, 1); renderSettings();
-}
-function closeModal() { const m = document.getElementById('um-modal'); if (m) m.remove(); }
+function deleteUser(idx){if(!confirm(`Delete "${ACCOUNTS[idx].name}"?`))return;ACCOUNTS.splice(idx,1);renderSettings();}
+function closeModal(){const m=document.getElementById('um-modal');if(m)m.remove();}
 
 // ── PDF ──────────────────────────────────────────────────────
-function generatePDF() {
-  const {jsPDF} = window.jspdf;
-  const doc     = new jsPDF({orientation:'landscape', unit:'mm', format:'a4'});
-  const W=297, M=16, TEAL=[0,76,79], CREAM=[253,248,242], REDBG=[254,226,226], RED=[185,28,28], GREY=[245,245,243];
-  const allOrders  = Object.values(S.submissions).flat();
-  const urgentList = detectUrgent(allOrders);
-  let y = 0;
+function generatePDF(){
+  const{jsPDF}=window.jspdf;
+  const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
+  const W=297,M=16,TEAL=[0,76,79],CREAM=[253,248,242],REDBG=[254,226,226],RED=[185,28,28],GREY=[245,245,243];
+  const allOrders=Object.values(S.submissions).flat();
+  const urgentList=detectUrgent(allOrders);
+  let y=0;
 
-  doc.setFillColor(...TEAL); doc.rect(0, 0, W, 28, 'F');
-  doc.setFont('helvetica','bold'); doc.setFontSize(18); doc.setTextColor(...CREAM);
-  doc.text('DAILY LOGISTICS REPORT', M, 17);
-  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(200, 230, 230);
-  doc.text(`${TODAY}   -   Generated: ${new Date().toLocaleTimeString()}`, M, 24);
-  y = 36;
+  doc.setFillColor(...TEAL);doc.rect(0,0,W,28,'F');
+  doc.setFont('helvetica','bold');doc.setFontSize(18);doc.setTextColor(...CREAM);
+  doc.text('DAILY LOGISTICS REPORT',M,17);
+  doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(200,230,230);
+  doc.text(`${TODAY}   -   Generated: ${new Date().toLocaleTimeString()}`,M,24);
+  y=36;
 
-  if (urgentList.length) {
-    const boxH = 14 + urgentList.length * 9;
-    doc.setFillColor(...REDBG); doc.roundedRect(M, y, W-M*2, boxH, 3, 3, 'F');
-    doc.setDrawColor(...RED); doc.setLineWidth(0.5); doc.roundedRect(M, y, W-M*2, boxH, 3, 3, 'S');
-    doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(...RED);
-    doc.text(`!! URGENT ISSUES (${urgentList.length})`, M+5, y+8); y += 13;
-    doc.setFont('helvetica','normal'); doc.setFontSize(9);
-    urgentList.forEach(u => { doc.text(`- ${u.order.trackingId||'—'}${u.order.orderId?' / '+u.order.orderId:''} [${u.order.shipTo||''}] - ${u.reasons.join(' | ')}`, M+6, y+5); y += 8; });
-    y += 6;
+  if(urgentList.length){
+    const boxH=14+urgentList.length*9;
+    doc.setFillColor(...REDBG);doc.roundedRect(M,y,W-M*2,boxH,3,3,'F');
+    doc.setDrawColor(...RED);doc.setLineWidth(0.5);doc.roundedRect(M,y,W-M*2,boxH,3,3,'S');
+    doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(...RED);
+    doc.text(`!! URGENT ISSUES (${urgentList.length})`,M+5,y+8);y+=13;
+    doc.setFont('helvetica','normal');doc.setFontSize(9);
+    urgentList.forEach(u=>{doc.text(`- ${u.order.trackingId||'—'}${u.order.orderId?' / '+u.order.orderId:''} [${u.order.shipTo||''}] - ${u.reasons.join(' | ')}`,M+6,y+5);y+=8;});
+    y+=6;
   }
 
-  doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(...TEAL);
-  doc.text('SUMMARY BY COUNTRY', M, y); y += 5;
+  doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(...TEAL);
+  doc.text('SUMMARY BY COUNTRY',M,y);y+=5;
   doc.autoTable({startY:y,
     head:[['Country','Pending Pick Up','In Transit Delays','On Hold / Returns','Order Backlogs']],
-    body: COUNTRIES.map(c => {
-      const co = allOrders.filter(o => o.shipTo === c.code);
-      const bl = Object.values(S.formData).flatMap(f => f.backlogs || []).filter(b => b.destination === c.code);
-      return [c.label+' ('+c.code+')',
-        co.filter(o=>o.section==='pending').length||'—',
-        co.filter(o=>o.section==='transit').length||'—',
-        co.filter(o=>o.section==='hold').length||'—',
-        bl.reduce((s,b)=>s+(parseInt(b.count)||0),0)||'—'];
+    body:COUNTRIES.map(c=>{
+      const co=allOrders.filter(o=>o.shipTo===c.code);
+      const bl=Object.values(S.formData).flatMap(f=>f.backlogs||[]).filter(b=>b.destination===c.code);
+      return[c.label+' ('+c.code+')',co.filter(o=>o.section==='pending').length||'—',co.filter(o=>o.section==='transit').length||'—',co.filter(o=>o.section==='hold').length||'—',bl.reduce((s,b)=>s+(parseInt(b.count)||0),0)||'—'];
     }),
     styles:{fontSize:10,cellPadding:4,halign:'center'},
     columnStyles:{0:{halign:'left',fontStyle:'bold'}},
     headStyles:{fillColor:TEAL,textColor:CREAM,fontStyle:'bold',fontSize:10,cellPadding:4},
-    alternateRowStyles:{fillColor:GREY}, margin:{left:M,right:M}, tableWidth:W-M*2});
-  y = doc.lastAutoTable.finalY + 10;
+    alternateRowStyles:{fillColor:GREY},margin:{left:M,right:M},tableWidth:W-M*2});
+  y=doc.lastAutoTable.finalY+10;
 
   [{key:'pending',label:'1.  PENDING PICK UP',sub:'> 1 day',cols:['Tracking ID','Order ID','Store','Ship To','Days','Status','Action Taken','By','Urgent']},
    {key:'transit',label:'2.  IN TRANSIT DELAYS',sub:'MY/SG > 5 days  |  PH/AU/US > 10 days',cols:['Tracking ID','Order ID','Store','Ship To','Delayed Days','Status','Action Taken','By','Urgent']},
    {key:'hold',   label:'3.  ON HOLD / RETURNS',sub:'',cols:['Tracking ID','Order ID','Store','Ship To','Type','Reason','Action Taken','By','Urgent']},
-  ].forEach(sec => {
-    const rows = allOrders.filter(o => o.section === sec.key);
-    if (!rows.length) return;
-    if (y > 170) { doc.addPage(); y = 16; }
-    const barH = sec.sub ? 14 : 10;
-    doc.setFillColor(...TEAL); doc.roundedRect(M, y, W-M*2, barH, 2, 2, 'F');
-    doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(...CREAM);
-    doc.text(sec.label, M+4, y+(sec.sub?6:7));
-    if (sec.sub) { doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(180,220,220); doc.text(sec.sub, M+4, y+12); }
-    y += barH + 4;
-    doc.autoTable({startY:y, head:[sec.cols],
-      body: rows.map(o => {
-        const isUrg = detectUrgent([o]).length > 0;
-        const by    = o.submittedBy || '—';
-        return sec.key === 'hold'
-          ? [o.trackingId||'—',o.orderId||'—',o.store||'—',o.shipTo||'—',o.type||'—',o.reason||'—',o.action||'—',by,isUrg?'!! YES':'']
-          : [o.trackingId||'—',o.orderId||'—',o.store||'—',o.shipTo||'—',o.days||'—',o.status||'—',o.action||'—',by,isUrg?'!! YES':''];
+  ].forEach(sec=>{
+    const rows=allOrders.filter(o=>o.section===sec.key);if(!rows.length)return;
+    if(y>170){doc.addPage();y=16;}
+    const barH=sec.sub?14:10;
+    doc.setFillColor(...TEAL);doc.roundedRect(M,y,W-M*2,barH,2,2,'F');
+    doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(...CREAM);
+    doc.text(sec.label,M+4,y+(sec.sub?6:7));
+    if(sec.sub){doc.setFont('helvetica','normal');doc.setFontSize(8.5);doc.setTextColor(180,220,220);doc.text(sec.sub,M+4,y+12);}
+    y+=barH+4;
+    doc.autoTable({startY:y,head:[sec.cols],
+      body:rows.map(o=>{const isUrg=detectUrgent([o]).length>0;const by=o.submittedBy||'—';
+        return sec.key==='hold'
+          ?[o.trackingId||'—',o.orderId||'—',o.store||'—',o.shipTo||'—',o.type||'—',o.reason||'—',o.action||'—',by,isUrg?'!! YES':'']
+          :[o.trackingId||'—',o.orderId||'—',o.store||'—',o.shipTo||'—',o.days||'—',o.status||'—',o.action||'—',by,isUrg?'!! YES':''];
       }),
       styles:{fontSize:9,cellPadding:3.5,overflow:'ellipsize'},
       headStyles:{fillColor:[230,240,240],textColor:TEAL,fontStyle:'bold',fontSize:9,cellPadding:4},
       alternateRowStyles:{fillColor:GREY},
       columnStyles:{0:{fontStyle:'bold',fontSize:8.5},7:{fontStyle:'italic',textColor:[100,100,100]},8:{textColor:RED,fontStyle:'bold',halign:'center'}},
-      didParseCell: d => { if (d.section==='body' && d.row.raw[8]==='!! YES') d.cell.styles.fillColor = REDBG; },
-      margin:{left:M,right:M}, tableWidth:W-M*2});
-    y = doc.lastAutoTable.finalY + 10;
+      didParseCell:d=>{if(d.section==='body'&&d.row.raw[8]==='!! YES')d.cell.styles.fillColor=REDBG;},
+      margin:{left:M,right:M},tableWidth:W-M*2});
+    y=doc.lastAutoTable.finalY+10;
   });
 
-  const blogs = Object.values(S.formData).flatMap(f => f.backlogs||[]).filter(b => b.destination && b.count !== '');
-  if (blogs.length) {
-    if (y > 170) { doc.addPage(); y = 16; }
-    doc.setFillColor(...TEAL); doc.roundedRect(M, y, W-M*2, 10, 2, 2, 'F');
-    doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(...CREAM);
-    doc.text('4.  ORDER BACKLOGS', M+4, y+7); y += 14;
-    doc.autoTable({startY:y, head:[['Destination','Store','Date','Order Count','Remarks']],
-      body: blogs.map(b => [b.destination||'—',b.store||'—',b.date||'—',b.count||'0',b.remarks||'—']),
+  const blogs=Object.values(S.formData).flatMap(f=>f.backlogs||[]).filter(b=>b.destination&&b.count!=='');
+  if(blogs.length){
+    if(y>170){doc.addPage();y=16;}
+    doc.setFillColor(...TEAL);doc.roundedRect(M,y,W-M*2,10,2,2,'F');
+    doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(...CREAM);
+    doc.text('4.  ORDER BACKLOGS',M+4,y+7);y+=14;
+    doc.autoTable({startY:y,head:[['Destination','Store','Date','Order Count','Remarks']],
+      body:blogs.map(b=>[b.destination||'—',b.store||'—',b.date||'—',b.count||'0',b.remarks||'—']),
       styles:{fontSize:9,cellPadding:3.5},
       headStyles:{fillColor:[230,240,240],textColor:TEAL,fontStyle:'bold',fontSize:9,cellPadding:4},
       columnStyles:{3:{halign:'center',fontStyle:'bold'}},
-      alternateRowStyles:{fillColor:GREY}, margin:{left:M,right:M}, tableWidth:W-M*2});
+      alternateRowStyles:{fillColor:GREY},margin:{left:M,right:M},tableWidth:W-M*2});
   }
 
-  const pages = doc.internal.getNumberOfPages();
-  for (let i = 1; i <= pages; i++) {
-    doc.setPage(i); doc.setFillColor(...TEAL); doc.rect(0, 200, W, 10, 'F');
-    doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(...CREAM);
-    doc.text(`Purest Nest Pte Ltd   Confidential   Daily Logistics Report   ${TODAY}`, M, 206);
-    doc.text(`Page ${i} of ${pages}`, W-M, 206, {align:'right'});
+  const pages=doc.internal.getNumberOfPages();
+  for(let i=1;i<=pages;i++){
+    doc.setPage(i);doc.setFillColor(...TEAL);doc.rect(0,200,W,10,'F');
+    doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(...CREAM);
+    doc.text(`Purest Nest Pte Ltd   Confidential   Daily Logistics Report   ${TODAY}`,M,206);
+    doc.text(`Page ${i} of ${pages}`,W-M,206,{align:'right'});
   }
-
   doc.save(`Logistics-Report-${TODAY.replace(/\//g,'-')}.pdf`);
-  pushToSheets({action:'log_pdf', date:TODAY_ISO, timestamp:new Date().toLocaleString(),
+  pushToSheets({action:'log_pdf',date:TODAY_ISO,timestamp:new Date().toLocaleString(),
     generatedBy:S.user.name,
     sectionsIncluded:Object.keys(S.submissions).map(c=>{const ct=COUNTRIES.find(x=>x.code===c);return ct?ct.label:c;}),
     totalOrders:Object.values(S.submissions).flat().length,
@@ -869,12 +778,12 @@ function generatePDF() {
 }
 
 // ── INIT ─────────────────────────────────────────────────────
-(function init() {
-  const saved = LS.get(SESSION_KEY);
-  if (saved && saved.username && saved.loginTime) {
-    if (Date.now() - saved.loginTime < INACTIVITY_MS) {
-      const acct = ACCOUNTS.find(a => a.username === saved.username);
-      if (acct) { applySession(acct, false); return; }
+(function init(){
+  const saved=LS.get(SESSION_KEY);
+  if(saved&&saved.username&&saved.loginTime){
+    if(Date.now()-saved.loginTime<INACTIVITY_MS){
+      const acct=ACCOUNTS.find(a=>a.username===saved.username);
+      if(acct){applySession(acct,false);return;}
     }
     LS.del(SESSION_KEY);
   }
