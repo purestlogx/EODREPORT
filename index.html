@@ -308,6 +308,7 @@ function applySession(acct, isNew) {
 
   // Show dashboard immediately, then sync from Sheets in background
   renderDashboard();
+  startAutoRefresh();
   if (!DEMO_MODE) {
     loadSettingsFromSheets().catch(() => {});
     loadSubmissions().then(() => {
@@ -317,6 +318,7 @@ function applySession(acct, isNew) {
 }
 
 function logout() {
+  stopAutoRefresh();
   LS.del(SESSION_KEY);
   S.user = null; S.formData = {}; S.submissions = {};
   ['nav-username','nav-role','btn-settings','btn-logout','btn-sheet']
@@ -386,9 +388,25 @@ function saveSettingsToSheets() {
   pushToSheets({action:'save_settings', settings:SETTINGS, accounts:ACCOUNTS});
 }
 
-// ── DASHBOARD ────────────────────────────────────────────────
+// ── AUTO REFRESH ──────────────────────────────────────────────
+let autoRefreshTimer = null;
+
+function startAutoRefresh() {
+  stopAutoRefresh();
+  autoRefreshTimer = setInterval(async () => {
+    if (!S.user || DEMO_MODE) return;
+    if (S.currentPage !== 'dashboard') return; // only refresh on dashboard
+    await loadSubmissions();
+    _drawDashboard();
+  }, 30000); // every 30 seconds
+}
+
+function stopAutoRefresh() {
+  if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
+}
 function renderDashboard() {
   S.currentPage = 'dashboard';
+  startAutoRefresh();
   _drawDashboard();
 }
 
@@ -495,6 +513,7 @@ function selectCountry(code) {
 
 function renderForm(code) {
   S.currentPage = 'form';
+  stopAutoRefresh(); // pause while filling form to avoid interruptions
   const ctry   = COUNTRIES.find(c => c.code === code);
   const fd     = S.formData[code];
   const stores = getStores(code);
