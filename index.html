@@ -395,6 +395,13 @@ async function loadSubmissions() {
         });
       }
     }
+    // Restore backlogs from Sheets
+    if(data.backlogs && S.page!=='form'){
+      Object.entries(data.backlogs).forEach(([code,blogs])=>{
+        if(!S.formData[code])S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[]};
+        S.formData[code].backlogs = blogs;
+      });
+    }
   } catch(e){console.warn('loadSubmissions failed:',e);}
 }
 
