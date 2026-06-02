@@ -497,7 +497,13 @@ async function refreshDashboard(){
 }
 
 function renderPreview(orders){
-  return[{key:'pending',label:'Pending Pick Up'},{key:'transit',label:'In Transit Delays'},{key:'hold',label:'On Hold / Returns'}].map(d=>{
+  const allBlogs = Object.values(S.formData).flatMap(f=>f.backlogs||[]).filter(b=>b.destination&&b.count!=='');
+  const sections = [
+    {key:'pending', label:'Pending Pick Up'},
+    {key:'transit', label:'In Transit Delays'},
+    {key:'hold',    label:'On Hold / Returns'},
+  ];
+  const orderCards = sections.map(d=>{
     const rows=orders.filter(o=>o.section===d.key);
     if(!rows.length)return'';
     return`<div class="card" style="padding:1rem;">
@@ -513,6 +519,22 @@ function renderPreview(orders){
       </table></div>
     </div>`;
   }).join('');
+
+  const blogCard = allBlogs.length ? `
+    <div class="card" style="padding:1rem;">
+      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Order Backlogs <span class="muted">(${allBlogs.length})</span></div>
+      <div style="overflow-x:auto;"><table class="otbl">
+        <thead><tr><th>Destination</th><th>Store</th><th>Date</th><th>Order Count</th><th>Remarks</th></tr></thead>
+        <tbody>${allBlogs.map(b=>`<tr>
+          <td>${b.destination||'—'}</td><td>${b.store||'—'}</td>
+          <td>${b.date||'—'}</td>
+          <td style="text-align:center;font-weight:600;">${b.count||'—'}</td>
+          <td>${b.remarks||'—'}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+    </div>` : '';
+
+  return orderCards + blogCard;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -902,8 +924,11 @@ function generatePDF(){
   }
 
   // Summary
-  doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(...TEAL);
-  doc.text('SUMMARY BY COUNTRY',M,y);y+=5;
+  if(y>170){doc.addPage();y=16;}
+  doc.setFillColor(...TEAL);doc.roundedRect(M,y,W-M*2,10,2,2,'F');
+  doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(...CREAM);
+  doc.text('SUMMARY BY COUNTRY',M+4,y+7);
+  y+=14;
   doc.autoTable({startY:y,
     head:[['Country','Pending Pick Up','In Transit Delays','On Hold / Returns','Order Backlogs']],
     body:SETTINGS.countries.map(c=>{
