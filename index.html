@@ -384,6 +384,8 @@ async function loadSubmissions() {
     const res=await fetch(`${SCRIPT_URL}?date=${encodeURIComponent(TODAY_ISO)}`,{mode:'cors'});
     if(!res.ok)throw new Error('HTTP '+res.status);
     const data=await res.json();
+
+    // Restore order submissions
     if(data.submissions){
       S.submissions=data.submissions;
       if(S.page!=='form'){
@@ -395,13 +397,17 @@ async function loadSubmissions() {
         });
       }
     }
-    // Restore backlogs from Sheets
-    if(data.backlogs && S.page!=='form'){
+
+    // Restore backlogs — also mark country as submitted if it has active backlogs
+    if(data.backlogs){
       Object.entries(data.backlogs).forEach(([code,blogs])=>{
         if(!S.formData[code])S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[]};
-        S.formData[code].backlogs = blogs;
+        if(S.page!=='form') S.formData[code].backlogs=blogs;
+        // Ensure country shows as Submitted on dashboard even if it only has backlogs
+        if(!S.submissions[code]) S.submissions[code]=[];
       });
     }
+
   } catch(e){console.warn('loadSubmissions failed:',e);}
 }
 
@@ -623,13 +629,17 @@ async function submitSection(code){
   if(btn){btn.textContent='Submitting...';btn.disabled=true;}
   const fd=S.formData[code];
   const orders=[...fd.pending,...fd.transit,...fd.hold].filter(o=>o.trackingId.trim());
+
+  // Update local state immediately — stays even after Sheets sync
   S.submissions[code]=orders;
+
+  // Push to Sheets in background
   pushToSheets({action:'submit',date:TODAY_ISO,country:code,
     preparedBy:S.user.name,orders,
     backlogs:fd.backlogs.filter(b=>b.count!==''),
   });
-  await new Promise(r=>setTimeout(r,2500));
-  await loadSubmissions().catch(()=>{});
+
+  // Go back to dashboard right away — no waiting
   backToDash();
 }
 
