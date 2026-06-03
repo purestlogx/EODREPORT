@@ -439,13 +439,12 @@ async function loadSubmissions() {
     }
   }
 
-  // Restore backlogs — also mark country as submitted if it has active backlogs
-  if(data.backlogs){
-    Object.entries(data.backlogs).forEach(([code,blogs])=>{
+  // Backlogs flow through the same submissions pipeline — populate from section:'backlog'
+  if(data.submissions&&S.page!=='form'){
+    Object.entries(data.submissions).forEach(([code,orders])=>{
       if(!S.formData[code])S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[]};
-      if(S.page!=='form') S.formData[code].backlogs=blogs;
-      // Ensure country shows as Submitted on dashboard even if it only has backlogs
-      if(!S.submissions[code]) S.submissions[code]=[];
+      const blogs=orders.filter(o=>o.section==='backlog');
+      if(blogs.length) S.formData[code].backlogs=blogs;
     });
   }
 }
@@ -493,7 +492,7 @@ function renderDashboard(){S.page='dashboard';_drawDashboard();}
 function _drawDashboard() {
   if(!S.user)return;
   const allOrders =Object.values(S.submissions).flat();
-  const urgent    =detectUrgent(allOrders);
+  const urgent    =detectUrgent(allOrders.filter(o=>o.section!=='backlog'));
   const submitted =Object.keys(S.submissions);
   const pending   =SETTINGS.countries.length-submitted.length;
 
@@ -615,24 +614,28 @@ async function selectCountry(code){
       fd.pending=freshOrders.filter(o=>o.section==='pending');
       fd.transit=freshOrders.filter(o=>o.section==='transit');
       fd.hold   =freshOrders.filter(o=>o.section==='hold');
-      console.warn('[LOGX] synced from submissions — pending:'+fd.pending.length+' transit:'+fd.transit.length+' hold:'+fd.hold.length);
+      const freshBlogs=freshOrders.filter(o=>o.section==='backlog');
+      if(freshBlogs.length) fd.backlogs=freshBlogs;
+      console.warn('[LOGX] synced — pending:'+fd.pending.length+' transit:'+fd.transit.length+' hold:'+fd.hold.length+' backlogs:'+freshBlogs.length);
     }
   }
 
   const fd=S.formData[code];
   if(!fd||(!fd.pending.length&&!fd.transit.length&&!fd.hold.length)){
+    // Preserve existing backlogs (e.g. country has only backlog data, no order sections)
+    const existingBacklogs=fd&&fd.backlogs&&fd.backlogs.some(b=>b.count!=='')?fd.backlogs:null;
     S.formData[code]={
       preparedBy:S.user.name,
       pending: [mkEmpty('pending',code,ctry.store,S.user.name)],
       transit: [mkEmpty('transit',code,ctry.store,S.user.name)],
       hold:    [mkEmpty('hold',   code,ctry.store,S.user.name)],
-      backlogs:[{destination:code,store:ctry.store,date:'',count:'',remarks:''}],
+      backlogs:existingBacklogs||[{destination:code,store:ctry.store,date:'',count:'',remarks:'',submittedBy:S.user.name}],
     };
   } else {
     if(!fd.pending.length)  fd.pending  =[mkEmpty('pending',code,ctry.store,S.user.name)];
     if(!fd.transit.length)  fd.transit  =[mkEmpty('transit',code,ctry.store,S.user.name)];
     if(!fd.hold.length)     fd.hold     =[mkEmpty('hold',   code,ctry.store,S.user.name)];
-    if(!fd.backlogs.length) fd.backlogs =[{destination:code,store:ctry.store,date:'',count:'',remarks:''}];
+    if(!fd.backlogs.length) fd.backlogs =[{destination:code,store:ctry.store,date:'',count:'',remarks:'',submittedBy:S.user.name}];
     fd.preparedBy=S.user.name;
   }
   renderForm(code);
@@ -693,13 +696,14 @@ function renderForm(code){
         <div style="margin-bottom:1.5rem;">
           <div class="sec-hdr"><span>4 · Order Backlogs</span></div>
           <div style="overflow-x:auto;"><table class="otbl" style="min-width:500px;">
-            <thead><tr><th>Destination</th><th>Store</th><th>Date</th><th>Order Count</th><th>Remarks</th><th></th></tr></thead>
+            <thead><tr><th>Destination</th><th>Store</th><th>Date</th><th>Order Count</th><th>Remarks</th><th>By</th><th></th></tr></thead>
             <tbody>${fd.backlogs.map((b,i)=>`<tr>
               <td>${combo(shipTo,b.destination||code,v=>updB(code,i,'destination',v))}</td>
               <td>${combo(stores,b.store||ctry.store,v=>updB(code,i,'store',v))}</td>
               <td><input type="date" value="${escVal(b.date)}" style="width:135px;" onchange="updB('${code}',${i},'date',this.value)"></td>
               <td><input type="number" value="${b.count}" placeholder="0" min="0" style="width:65px;" oninput="updB('${code}',${i},'count',this.value)"></td>
               <td>${combo(SETTINGS.blogRemarks,b.remarks||'',v=>updB(code,i,'remarks',v))}</td>
+              <td class="by-cell">${b.submittedBy||S.user.name}</td>
               <td><button class="btn-del" onclick="delBlog('${code}',${i})">X</button></td>
             </tr>`).join('')}</tbody>
           </table></div>
@@ -719,8 +723,8 @@ function upd(code,sec,idx,f,v){if(S.formData[code]&&S.formData[code][sec])S.form
 function updB(code,idx,f,v){if(S.formData[code]&&S.formData[code].backlogs)S.formData[code].backlogs[idx][f]=v;}
 function addOrder(code,sec){const c=SETTINGS.countries.find(c=>c.code===code);S.formData[code][sec].push(mkEmpty(sec,code,c.store,S.user.name));renderForm(code);}
 function delOrder(code,sec,idx){S.formData[code][sec].splice(idx,1);if(!S.formData[code][sec].length){const c=SETTINGS.countries.find(c=>c.code===code);S.formData[code][sec].push(mkEmpty(sec,code,c.store,S.user.name));}renderForm(code);}
-function addBlog(code){S.formData[code].backlogs.push({destination:code,store:'',date:TODAY_ISO,count:'',remarks:''});renderForm(code);}
-function delBlog(code,idx){S.formData[code].backlogs.splice(idx,1);if(!S.formData[code].backlogs.length)S.formData[code].backlogs.push({destination:code,store:'',date:'',count:'',remarks:''});renderForm(code);}
+function addBlog(code){S.formData[code].backlogs.push({destination:code,store:'',date:TODAY_ISO,count:'',remarks:'',submittedBy:S.user.name});renderForm(code);}
+function delBlog(code,idx){S.formData[code].backlogs.splice(idx,1);if(!S.formData[code].backlogs.length)S.formData[code].backlogs.push({destination:code,store:'',date:'',count:'',remarks:'',submittedBy:S.user.name});renderForm(code);}
 
 async function submitSection(code){
   const btn=document.getElementById('submit-btn');
