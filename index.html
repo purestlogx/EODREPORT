@@ -160,7 +160,7 @@ select:focus,input:focus{border-color:var(--teal);}
 // ════════════════════════════════════════════════════════════
 //  CONFIG  — must be first, no other declarations above this
 // ════════════════════════════════════════════════════════════
-const SCRIPT_URL    = 'https://script.google.com/macros/s/AKfycbxDLwo-K8zSDT_R1uZEbbqtWto_iL4PhEuQnaKHK4lUTzwgd0wArUPW-lidhU-V9cU9Iw/exec';
+const SCRIPT_URL    = 'https://script.google.com/macros/s/AKfycbyFwiK3cnkMSOFVWk9sRaKpzrjfGAIHEbgRAOhxgGrjQAHlCa-bkS3LUNbyEhvWjb8u-A/exec';
 const SHEET_URL     = 'https://docs.google.com/spreadsheets/d/1zh50gtwztshO7ZKi0eJe6xAk63wE7woqo3dguwTgdAI';
 const DEMO_MODE     = false;
 const TODAY         = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'numeric'});
@@ -231,6 +231,27 @@ function showLoading(msg) {
   root().innerHTML=`<div style="min-height:calc(100vh - 52px);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;">
     <div class="spinner"></div><p class="muted">${msg||'Loading...'}</p></div>`;
 }
+function escVal(v) {
+  return String(v||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+}
+function combineBlogs(blogs) {
+  const map = new Map();
+  blogs.forEach(b => {
+    const key = `${b.destination}||${b.date}||${b.store}`;
+    if (!map.has(key)) {
+      map.set(key, {...b, _count: parseInt(b.count)||0, _remarks: b.remarks?[b.remarks]:[]});
+    } else {
+      const ex = map.get(key);
+      ex._count += parseInt(b.count)||0;
+      if (b.remarks && !ex._remarks.includes(b.remarks)) ex._remarks.push(b.remarks);
+    }
+  });
+  return [...map.values()].map(b => ({
+    destination: b.destination, store: b.store, date: b.date,
+    count: String(b._count),
+    remarks: b._remarks.filter(Boolean).join(', '),
+  }));
+}
 
 // ════════════════════════════════════════════════════════════
 //  ACTIVITY TRACKING
@@ -252,14 +273,15 @@ function combo(arr, val, fn) {
   const id='cb_'+(cbIdx++); CB[id]=fn;
   const isOther=!!(val && !arr.includes(val));
   const sel=isOther?'__other__':(val||'');
+  const safeVal=escVal(isOther?val:'');
   return `<div class="combo-wrap">
     <select data-cb="${id}" onchange="comboChange(this)">
       <option value="">Select...</option>
-      ${arr.map(v=>`<option value="${v}"${v===sel?' selected':''}>${v}</option>`).join('')}
+      ${arr.map(v=>`<option value="${escVal(v)}"${v===sel?' selected':''}>${escVal(v)}</option>`).join('')}
       <option value="__other__"${isOther?' selected':''}>Other...</option>
     </select>
     <input class="combo-text" type="text" placeholder="Type here..."
-      value="${isOther?val:''}" data-cb="${id}"
+      value="${safeVal}" data-cb="${id}"
       style="display:${isOther?'block':'none'};" oninput="comboText(this)">
   </div>`;
 }
@@ -381,7 +403,7 @@ function pushToSheets(payload) {
 async function loadSubmissions() {
   if(DEMO_MODE)return;
   try {
-    const res=await fetch(`${SCRIPT_URL}?date=${encodeURIComponent(TODAY_ISO)}`,{mode:'cors'});
+    const res=await fetch(SCRIPT_URL,{mode:'cors'});
     if(!res.ok)throw new Error('HTTP '+res.status);
     const data=await res.json();
 
@@ -497,7 +519,9 @@ async function refreshDashboard(){
 }
 
 function renderPreview(orders){
-  const allBlogs = Object.values(S.formData).flatMap(f=>f.backlogs||[]).filter(b=>b.destination&&b.count!=='');
+  const allBlogs = combineBlogs(
+    Object.values(S.formData).flatMap(f=>f.backlogs||[]).filter(b=>b.destination&&b.count!=='')
+  );
   const sections = [
     {key:'pending', label:'Pending Pick Up'},
     {key:'transit', label:'In Transit Delays'},
@@ -621,7 +645,7 @@ function renderForm(code){
             <tbody>${fd.backlogs.map((b,i)=>`<tr>
               <td>${combo(shipTo,b.destination||code,v=>updB(code,i,'destination',v))}</td>
               <td>${combo(stores,b.store||ctry.store,v=>updB(code,i,'store',v))}</td>
-              <td><input type="text" value="${b.date}" placeholder="DD/MM" style="width:65px;" oninput="updB('${code}',${i},'date',this.value)"></td>
+              <td><input type="date" value="${escVal(b.date)}" style="width:135px;" onchange="updB('${code}',${i},'date',this.value)"></td>
               <td><input type="number" value="${b.count}" placeholder="0" min="0" style="width:65px;" oninput="updB('${code}',${i},'count',this.value)"></td>
               <td>${combo(SETTINGS.blogRemarks,b.remarks||'',v=>updB(code,i,'remarks',v))}</td>
               <td><button class="btn-del" onclick="delBlog('${code}',${i})">X</button></td>
@@ -643,7 +667,7 @@ function upd(code,sec,idx,f,v){if(S.formData[code]&&S.formData[code][sec])S.form
 function updB(code,idx,f,v){if(S.formData[code]&&S.formData[code].backlogs)S.formData[code].backlogs[idx][f]=v;}
 function addOrder(code,sec){const c=SETTINGS.countries.find(c=>c.code===code);S.formData[code][sec].push(mkEmpty(sec,code,c.store,S.user.name));renderForm(code);}
 function delOrder(code,sec,idx){S.formData[code][sec].splice(idx,1);if(!S.formData[code][sec].length){const c=SETTINGS.countries.find(c=>c.code===code);S.formData[code][sec].push(mkEmpty(sec,code,c.store,S.user.name));}renderForm(code);}
-function addBlog(code){S.formData[code].backlogs.push({destination:code,store:'',date:'',count:'',remarks:''});renderForm(code);}
+function addBlog(code){S.formData[code].backlogs.push({destination:code,store:'',date:TODAY_ISO,count:'',remarks:''});renderForm(code);}
 function delBlog(code,idx){S.formData[code].backlogs.splice(idx,1);if(!S.formData[code].backlogs.length)S.formData[code].backlogs.push({destination:code,store:'',date:'',count:'',remarks:''});renderForm(code);}
 
 async function submitSection(code){
@@ -972,7 +996,9 @@ function generatePDF(){
   });
 
   // Backlogs
-  const blogs=Object.values(S.formData).flatMap(f=>f.backlogs||[]).filter(b=>b.destination&&b.count!=='');
+  const blogs=combineBlogs(
+    Object.values(S.formData).flatMap(f=>f.backlogs||[]).filter(b=>b.destination&&b.count!=='')
+  );
   if(blogs.length){
     if(y>170){doc.addPage();y=16;}
     doc.setFillColor(...TEAL);doc.roundedRect(M,y,W-M*2,10,2,2,'F');
