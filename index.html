@@ -392,9 +392,9 @@ function logout() {
 //  API
 // ════════════════════════════════════════════════════════════
 function pushToSheets(payload) {
-  if(DEMO_MODE)return;
-  fetch(SCRIPT_URL,{
-    method:'POST', mode:'no-cors',
+  if(DEMO_MODE) return Promise.resolve();
+  return fetch(SCRIPT_URL,{
+    method:'POST', mode:'cors',
     headers:{'Content-Type':'text/plain;charset=UTF-8'},
     body:JSON.stringify(payload),
   }).catch(e=>console.warn('Push failed:',e));
@@ -676,16 +676,15 @@ async function submitSection(code){
   const fd=S.formData[code];
   const orders=[...fd.pending,...fd.transit,...fd.hold].filter(o=>o.trackingId.trim());
 
-  // Update local state immediately — stays even after Sheets sync
-  S.submissions[code]=orders;
-
-  // Push to Sheets in background
-  pushToSheets({action:'submit',date:TODAY_ISO,country:code,
+  // Wait for Sheets to confirm write before navigating away
+  await pushToSheets({action:'submit',date:TODAY_ISO,country:code,
     preparedBy:S.user.name,orders,
     backlogs:fd.backlogs.filter(b=>b.count!==''),
-  });
+  }).catch(()=>{});
 
-  // Go back to dashboard right away — no waiting
+  // Update local state after Sheets confirms
+  S.submissions[code]=orders;
+
   backToDash();
 }
 
