@@ -412,6 +412,11 @@ async function loadSubmissions() {
       if(!res.ok) throw new Error('HTTP '+res.status);
       const json=await res.json();
       if(json.error) throw new Error(json.error);
+      // Debug: log what Apps Script returned so we can diagnose section issues
+      console.log('[LOGX] loadSubmissions attempt '+(i+1)+': countries='+Object.keys(json.submissions||{}).join(',')||'none');
+      Object.entries(json.submissions||{}).forEach(([c,orders])=>{
+        console.log('[LOGX]   '+c+': '+orders.length+' orders, sections=['+orders.map(o=>o.section).join(',')+']');
+      });
       data=json;
       break; // success — stop retrying
     }catch(e){
@@ -583,22 +588,34 @@ function renderPreview(orders){
 // ════════════════════════════════════════════════════════════
 //  FORM
 // ════════════════════════════════════════════════════════════
-function selectCountry(code){
+async function selectCountry(code){
   const ctry=SETTINGS.countries.find(c=>c.code===code);
   if(!ctry)return;
 
-  // Always sync formData from submissions first — ensures form reflects Sheets data
-  // even if formData was never populated or was stale
+  // Check if this country has submissions in Sheets but formData sections look empty
+  // (happens on cold-start: Apps Script returns orders without proper section field on first call)
   const sheetOrders=S.submissions[code]||[];
-  if(sheetOrders.length>0){
+  const fd0=S.formData[code];
+  const hasFormOrders=fd0&&(fd0.pending.some(o=>o.trackingId)||fd0.transit.some(o=>o.trackingId)||fd0.hold.some(o=>o.trackingId));
+
+  if(sheetOrders.length>0&&!hasFormOrders){
+    // Submissions exist but form appears empty — do a fresh fetch to recover correct data
+    console.warn('[LOGX] selectCountry: '+code+' has '+sheetOrders.length+' submissions but empty formData — re-fetching');
+    console.warn('[LOGX] section values in cache:', sheetOrders.map(o=>o.section).join(', ')||'(none)');
+    showLoading('Loading...');
+    await loadSubmissions().catch(()=>{});
+  }
+
+  // Sync formData from latest submissions if sections are still empty
+  const freshOrders=S.submissions[code]||[];
+  if(freshOrders.length>0){
     if(!S.formData[code])S.formData[code]={preparedBy:S.user.name,pending:[],transit:[],hold:[],backlogs:[]};
     const fd=S.formData[code];
-    // Only repopulate sections if they appear empty vs what Sheets has
-    const hasLocalOrders=fd.pending.some(o=>o.trackingId)||fd.transit.some(o=>o.trackingId)||fd.hold.some(o=>o.trackingId);
-    if(!hasLocalOrders){
-      fd.pending=sheetOrders.filter(o=>o.section==='pending');
-      fd.transit=sheetOrders.filter(o=>o.section==='transit');
-      fd.hold   =sheetOrders.filter(o=>o.section==='hold');
+    if(!fd.pending.some(o=>o.trackingId)&&!fd.transit.some(o=>o.trackingId)&&!fd.hold.some(o=>o.trackingId)){
+      fd.pending=freshOrders.filter(o=>o.section==='pending');
+      fd.transit=freshOrders.filter(o=>o.section==='transit');
+      fd.hold   =freshOrders.filter(o=>o.section==='hold');
+      console.warn('[LOGX] synced from submissions — pending:'+fd.pending.length+' transit:'+fd.transit.length+' hold:'+fd.hold.length);
     }
   }
 
