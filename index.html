@@ -392,9 +392,9 @@ function logout() {
 //  API
 // ════════════════════════════════════════════════════════════
 function pushToSheets(payload) {
-  if(DEMO_MODE) return Promise.resolve();
-  return fetch(SCRIPT_URL,{
-    method:'POST', mode:'cors',
+  if(DEMO_MODE)return;
+  fetch(SCRIPT_URL,{
+    method:'POST', mode:'no-cors',
     headers:{'Content-Type':'text/plain;charset=UTF-8'},
     body:JSON.stringify(payload),
   }).catch(e=>console.warn('Push failed:',e));
@@ -402,35 +402,47 @@ function pushToSheets(payload) {
 
 async function loadSubmissions() {
   if(DEMO_MODE)return;
-  try {
-    const res=await fetch(SCRIPT_URL,{mode:'cors'});
-    if(!res.ok)throw new Error('HTTP '+res.status);
-    const data=await res.json();
+  let data=null;
 
-    // Restore order submissions
-    if(data.submissions){
-      S.submissions=data.submissions;
-      if(S.page!=='form'){
-        Object.entries(data.submissions).forEach(([code,orders])=>{
-          if(!S.formData[code])S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[]};
-          ['pending','transit','hold'].forEach(sec=>{
-            S.formData[code][sec]=orders.filter(o=>o.section===sec);
-          });
-        });
-      }
+  // Retry up to 3 times — handles Apps Script cold starts and intermittent failures
+  for(let i=0;i<3;i++){
+    if(i>0) await new Promise(r=>setTimeout(r,1500));
+    try{
+      const res=await fetch(SCRIPT_URL,{mode:'cors'});
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      const json=await res.json();
+      if(json.error) throw new Error(json.error);
+      data=json;
+      break; // success — stop retrying
+    }catch(e){
+      console.warn(`loadSubmissions [${i+1}/3]:`,e);
+      if(i===2) return; // all 3 attempts failed — leave existing data intact
     }
+  }
+  if(!data) return;
 
-    // Restore backlogs — also mark country as submitted if it has active backlogs
-    if(data.backlogs){
-      Object.entries(data.backlogs).forEach(([code,blogs])=>{
+  // Restore order submissions
+  if(data.submissions){
+    S.submissions=data.submissions;
+    if(S.page!=='form'){
+      Object.entries(data.submissions).forEach(([code,orders])=>{
         if(!S.formData[code])S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[]};
-        if(S.page!=='form') S.formData[code].backlogs=blogs;
-        // Ensure country shows as Submitted on dashboard even if it only has backlogs
-        if(!S.submissions[code]) S.submissions[code]=[];
+        ['pending','transit','hold'].forEach(sec=>{
+          S.formData[code][sec]=orders.filter(o=>o.section===sec);
+        });
       });
     }
+  }
 
-  } catch(e){console.warn('loadSubmissions failed:',e);}
+  // Restore backlogs — also mark country as submitted if it has active backlogs
+  if(data.backlogs){
+    Object.entries(data.backlogs).forEach(([code,blogs])=>{
+      if(!S.formData[code])S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[]};
+      if(S.page!=='form') S.formData[code].backlogs=blogs;
+      // Ensure country shows as Submitted on dashboard even if it only has backlogs
+      if(!S.submissions[code]) S.submissions[code]=[];
+    });
+  }
 }
 
 async function loadSettingsFromSheets() {
@@ -455,7 +467,12 @@ function startAutoRefresh() {
   stopAutoRefresh();
   autoRefreshTimer=setInterval(async()=>{
     if(!S.user||S.page!=='dashboard')return;
+    const prevSubs=S.submissions; // backup before refresh
     await loadSubmissions().catch(()=>{});
+    // If refresh wiped data that was there before, restore — likely a spurious empty response
+    if(Object.keys(S.submissions).length===0 && Object.keys(prevSubs).length>0){
+      S.submissions=prevSubs;
+    }
     if(S.page==='dashboard') _drawDashboard();
   },30000);
 }
@@ -672,19 +689,35 @@ function delBlog(code,idx){S.formData[code].backlogs.splice(idx,1);if(!S.formDat
 
 async function submitSection(code){
   const btn=document.getElementById('submit-btn');
-  if(btn){btn.textContent='Submitting...';btn.disabled=true;}
+  if(btn){btn.textContent='Saving to Sheets...';btn.disabled=true;}
   const fd=S.formData[code];
   const orders=[...fd.pending,...fd.transit,...fd.hold].filter(o=>o.trackingId.trim());
+  const submittedIDs=new Set(orders.map(o=>o.trackingId));
 
-  // Wait for Sheets to confirm write before navigating away
-  await pushToSheets({action:'submit',date:TODAY_ISO,country:code,
+  // Fire to Sheets (no-cors — proven to reach doPost)
+  pushToSheets({action:'submit',date:TODAY_ISO,country:code,
     preparedBy:S.user.name,orders,
     backlogs:fd.backlogs.filter(b=>b.count!==''),
-  }).catch(()=>{});
+  });
 
-  // Update local state after Sheets confirms
+  // Poll GET every 1.5s until Sheets confirms the write (max 12s)
+  const deadline=Date.now()+12000;
+  while(Date.now()<deadline){
+    await new Promise(r=>setTimeout(r,1500));
+    try{
+      await loadSubmissions();
+      const sheetOrders=S.submissions[code]||[];
+      if(orders.length===0){
+        // Cleared all: confirmed when Sheets shows no active orders for this country
+        if(sheetOrders.length===0) break;
+      } else {
+        // Has orders: confirmed when at least one tracking ID appears in Sheets
+        if(sheetOrders.some(o=>submittedIDs.has(o.trackingId))) break;
+      }
+    }catch(e){}
+  }
+
   S.submissions[code]=orders;
-
   backToDash();
 }
 
