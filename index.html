@@ -439,12 +439,20 @@ async function loadSubmissions() {
     }
   }
 
-  // Backlogs flow through the same submissions pipeline — populate from section:'backlog'
+  // Backlogs — new Apps Script merges them into submissions as section:'backlog'
   if(data.submissions&&S.page!=='form'){
     Object.entries(data.submissions).forEach(([code,orders])=>{
       if(!S.formData[code])S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[]};
       const blogs=orders.filter(o=>o.section==='backlog');
       if(blogs.length) S.formData[code].backlogs=blogs;
+    });
+  }
+  // Fallback: old Apps Script returns backlogs separately as data.backlogs
+  if(data.backlogs&&S.page!=='form'){
+    Object.entries(data.backlogs).forEach(([code,blogs])=>{
+      if(!S.formData[code])S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[]};
+      if(!S.formData[code].backlogs.length) S.formData[code].backlogs=blogs;
+      if(!S.submissions[code]) S.submissions[code]=[];
     });
   }
 }
