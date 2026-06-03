@@ -467,12 +467,14 @@ function startAutoRefresh() {
   stopAutoRefresh();
   autoRefreshTimer=setInterval(async()=>{
     if(!S.user||S.page!=='dashboard')return;
-    const prevSubs=S.submissions; // backup before refresh
+    const prevKeys=Object.keys(S.submissions); // snapshot of country keys before refresh
+    const prevSubs={...S.submissions};          // shallow copy to restore from if needed
     await loadSubmissions().catch(()=>{});
-    // If refresh wiped data that was there before, restore — likely a spurious empty response
-    if(Object.keys(S.submissions).length===0 && Object.keys(prevSubs).length>0){
-      S.submissions=prevSubs;
-    }
+    // Restore any country that existed before but is missing after refresh
+    // (handles partial Sheets reads and race conditions where user navigates mid-refresh)
+    prevKeys.forEach(code=>{
+      if(!S.submissions[code]) S.submissions[code]=prevSubs[code];
+    });
     if(S.page==='dashboard') _drawDashboard();
   },30000);
 }
@@ -584,6 +586,22 @@ function renderPreview(orders){
 function selectCountry(code){
   const ctry=SETTINGS.countries.find(c=>c.code===code);
   if(!ctry)return;
+
+  // Always sync formData from submissions first — ensures form reflects Sheets data
+  // even if formData was never populated or was stale
+  const sheetOrders=S.submissions[code]||[];
+  if(sheetOrders.length>0){
+    if(!S.formData[code])S.formData[code]={preparedBy:S.user.name,pending:[],transit:[],hold:[],backlogs:[]};
+    const fd=S.formData[code];
+    // Only repopulate sections if they appear empty vs what Sheets has
+    const hasLocalOrders=fd.pending.some(o=>o.trackingId)||fd.transit.some(o=>o.trackingId)||fd.hold.some(o=>o.trackingId);
+    if(!hasLocalOrders){
+      fd.pending=sheetOrders.filter(o=>o.section==='pending');
+      fd.transit=sheetOrders.filter(o=>o.section==='transit');
+      fd.hold   =sheetOrders.filter(o=>o.section==='hold');
+    }
+  }
+
   const fd=S.formData[code];
   if(!fd||(!fd.pending.length&&!fd.transit.length&&!fd.hold.length)){
     S.formData[code]={
