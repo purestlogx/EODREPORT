@@ -72,10 +72,19 @@ select:focus,input:focus{border-color:var(--teal);}
 .alert{padding:10px 14px;border-radius:var(--r-sm);font-size:13px;margin-bottom:1rem;}
 .alert-info{background:var(--teal-lt);border:1px solid var(--border);}
 .alert-ok{background:var(--ok-bg);color:var(--ok);border:1px solid rgba(22,101,52,.15);}
-.urgent-box{background:var(--danger-bg);border:1px solid rgba(185,28,28,.2);border-radius:var(--r-sm);padding:.85rem 1rem;margin-bottom:1rem;}
-.urgent-title{font-size:13px;font-weight:600;color:var(--danger);margin-bottom:7px;}
-.urgent-item{font-size:12px;color:#7f1d1d;padding:5px 0;border-bottom:1px solid rgba(185,28,28,.1);line-height:1.5;}
+.urgent-box{overflow:hidden;border-radius:var(--r-sm);border:1px solid rgba(185,28,28,.35);margin-bottom:1rem;}
+.urgent-box-hdr{background:#B91C1C;padding:7px 12px;display:flex;align-items:center;gap:8px;}
+.urgent-box-hdr>span:first-child{color:#fff;font-size:13px;font-weight:700;letter-spacing:.03em;}
+.urgent-badge{background:#fff;color:#B91C1C;font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;}
+.urgent-body{background:#FEF2F2;}
+.urgent-ctry-grp{padding:8px 12px 5px;border-bottom:1px solid rgba(185,28,28,.12);}
+.urgent-ctry-grp:last-child{border-bottom:none;}
+.urgent-ctry-lbl{font-size:10.5px;font-weight:700;color:#7F1D1D;letter-spacing:.07em;text-transform:uppercase;margin-bottom:5px;}
+.urgent-item{display:flex;align-items:flex-start;gap:8px;padding:4px 0;border-bottom:1px dashed rgba(185,28,28,.15);}
 .urgent-item:last-child{border-bottom:none;}
+.urgent-sec-tag{flex-shrink:0;font-size:10px;font-weight:700;color:#B91C1C;background:#FEE2E2;border:1px solid rgba(185,28,28,.3);padding:2px 6px;border-radius:3px;margin-top:1px;white-space:nowrap;min-width:110px;text-align:center;}
+.urgent-tid{font-size:12px;font-weight:700;color:#991B1B;}
+.urgent-reason{font-size:11px;color:#7F1D1D;margin-top:2px;line-height:1.4;}
 .pending-banner{background:var(--warn-bg);border:1px solid rgba(180,83,9,.2);border-radius:var(--r-sm);padding:8px 12px;font-size:13px;color:var(--warn);margin-bottom:1rem;}
 /* FORM TABLE */
 .sec-hdr{background:var(--teal);color:#FDF8F2;border-radius:var(--r-sm);padding:8px 12px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;}
@@ -239,17 +248,20 @@ function combineBlogs(blogs) {
   blogs.forEach(b => {
     const key = `${b.destination}||${b.date}||${b.store}`;
     if (!map.has(key)) {
-      map.set(key, {...b, _count: parseInt(b.count)||0, _remarks: b.remarks?[b.remarks]:[]});
+      map.set(key, {...b, _count: parseInt(b.count)||0, _remarks: b.remarks?[b.remarks]:[], _ids: b.orderIds?[b.orderIds]:[]});
     } else {
       const ex = map.get(key);
       ex._count += parseInt(b.count)||0;
       if (b.remarks && !ex._remarks.includes(b.remarks)) ex._remarks.push(b.remarks);
+      if (b.orderIds) b.orderIds.split(',').map(s=>s.trim()).filter(Boolean).forEach(id=>{if(!ex._ids.includes(id))ex._ids.push(id);});
     }
   });
   return [...map.values()].map(b => ({
     destination: b.destination, store: b.store, date: b.date,
     count: String(b._count),
     remarks: b._remarks.filter(Boolean).join(', '),
+    orderIds: b._ids.filter(Boolean).join(', '),
+    submittedBy: b.submittedBy||'',
   }));
 }
 
@@ -497,6 +509,35 @@ function stopAutoRefresh(){if(autoRefreshTimer){clearInterval(autoRefreshTimer);
 // ════════════════════════════════════════════════════════════
 function renderDashboard(){S.page='dashboard';_drawDashboard();}
 
+function renderUrgentBox(urgent){
+  const byC={};
+  const SEC={pending:'Pending Pick Up',transit:'In Transit Delays',hold:'On Hold / Returns'};
+  urgent.forEach(u=>{const c=u.order.shipTo||'?';if(!byC[c])byC[c]=[];byC[c].push(u);});
+  const groups=Object.entries(byC).map(([ctry,items])=>{
+    const co=SETTINGS.countries.find(c=>c.code===ctry);
+    const rows=items.map(u=>
+      '<div class="urgent-item">'
+      +'<span class="urgent-sec-tag">'+(SEC[u.order.section]||u.order.section)+'</span>'
+      +'<div>'
+      +'<span class="urgent-tid">'+(u.order.trackingId||'—')+'</span>'
+      +(u.order.orderId?' / '+u.order.orderId:'')
+      +(u.order.urgent?'<span style="background:var(--danger-bg);color:var(--danger);font-size:10px;padding:1px 5px;border-radius:20px;margin-left:5px;">Manual</span>':'')
+      +'<div class="urgent-reason">'+u.reasons.join(' | ')+'</div>'
+      +'</div></div>'
+    ).join('');
+    return '<div class="urgent-ctry-grp">'
+      +'<div class="urgent-ctry-lbl">'+(co?co.label:ctry)+' ('+ctry+')</div>'
+      +rows+'</div>';
+  }).join('');
+  return '<div class="urgent-box">'
+    +'<div class="urgent-box-hdr">'
+    +'<span>!! Urgent Issues</span>'
+    +'<span class="urgent-badge">'+urgent.length+' order'+(urgent.length>1?'s':'')+'</span>'
+    +'</div>'
+    +'<div class="urgent-body">'+groups+'</div>'
+    +'</div>';
+}
+
 function _drawDashboard() {
   if(!S.user)return;
   const allOrders =Object.values(S.submissions).flat();
@@ -522,17 +563,8 @@ function _drawDashboard() {
           </div>`;
         }).join('')}
       </div>
-      ${urgent.length>0?`
-        <div class="urgent-box">
-          <div class="urgent-title">!! Urgent Issues (${urgent.length})</div>
-          ${urgent.map(u=>`<div class="urgent-item">
-            <strong>${u.order.trackingId||'—'}</strong>${u.order.orderId?` / ${u.order.orderId}`:''}
-            <span class="muted"> · ${u.order.shipTo||''}</span>
-            ${u.order.urgent?'<span style="background:var(--danger-bg);color:var(--danger);font-size:10px;padding:1px 6px;border-radius:20px;margin-left:5px;">Manual</span>':''}
-            <br><span style="font-size:11px;color:#991b1b;">${u.reasons.join(' | ')}</span>
-          </div>`).join('')}
-        </div>`:allOrders.length>0?`<div class="alert alert-ok">No urgent issues detected</div>`:''}
-      ${pending>0?`<div class="pending-banner">⏳ ${pending} section${pending>1?'s':''} still pending</div>`:''}
+      ${urgent.length>0?renderUrgentBox(urgent):allOrders.length>0?`<div class="alert alert-ok">No urgent issues detected</div>`:''}
+            ${pending>0?`<div class="pending-banner">⏳ ${pending} section${pending>1?'s':''} still pending</div>`:''}
       <div class="flex gap2 items-c" style="margin-bottom:1.5rem;flex-wrap:wrap;">
         <button class="btn btn-pdf" onclick="generatePDF()" ${allOrders.length===0?'disabled':''}>Download PDF</button>
         <button class="btn btn-ghost btn-sm" id="refresh-btn" onclick="refreshDashboard()">Refresh</button>
@@ -579,10 +611,11 @@ function renderPreview(orders){
     <div class="card" style="padding:1rem;">
       <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Order Backlogs <span class="muted">(${allBlogs.length})</span></div>
       <div style="overflow-x:auto;"><table class="otbl">
-        <thead><tr><th>Destination</th><th>Store</th><th>Order Date</th><th>Order Count</th><th>Remarks</th></tr></thead>
+        <thead><tr><th>Destination</th><th>Store</th><th>Order Date</th><th>Order ID(s)</th><th>Order Count</th><th>Remarks</th></tr></thead>
         <tbody>${allBlogs.map(b=>`<tr>
           <td>${b.destination||'—'}</td><td>${b.store||'—'}</td>
           <td>${b.date||'—'}</td>
+          <td style="font-size:11px;color:#374151;">${b.orderIds||'—'}</td>
           <td style="text-align:center;font-weight:600;">${b.count||'—'}</td>
           <td>${b.remarks||'—'}</td>
         </tr>`).join('')}</tbody>
@@ -637,13 +670,13 @@ async function selectCountry(code){
       pending: [mkEmpty('pending',code,ctry.store,S.user.name)],
       transit: [mkEmpty('transit',code,ctry.store,S.user.name)],
       hold:    [mkEmpty('hold',   code,ctry.store,S.user.name)],
-      backlogs:existingBacklogs||[{destination:code,store:ctry.store,date:'',count:'',remarks:'',submittedBy:S.user.name}],
+      backlogs:existingBacklogs||[{destination:code,store:ctry.store,date:'',orderIds:'',count:'',remarks:'',submittedBy:S.user.name}],
     };
   } else {
     if(!fd.pending.length)  fd.pending  =[mkEmpty('pending',code,ctry.store,S.user.name)];
     if(!fd.transit.length)  fd.transit  =[mkEmpty('transit',code,ctry.store,S.user.name)];
     if(!fd.hold.length)     fd.hold     =[mkEmpty('hold',   code,ctry.store,S.user.name)];
-    if(!fd.backlogs.length) fd.backlogs =[{destination:code,store:ctry.store,date:'',count:'',remarks:'',submittedBy:S.user.name}];
+    if(!fd.backlogs.length) fd.backlogs =[{destination:code,store:ctry.store,date:'',orderIds:'',count:'',remarks:'',submittedBy:S.user.name}];
     fd.preparedBy=S.user.name;
   }
   renderForm(code);
@@ -704,11 +737,12 @@ function renderForm(code){
         <div style="margin-bottom:1.5rem;">
           <div class="sec-hdr"><span>4 · Order Backlogs</span></div>
           <div style="overflow-x:auto;"><table class="otbl" style="min-width:500px;">
-            <thead><tr><th>Destination</th><th>Store</th><th>Order Date</th><th>Order Count</th><th>Remarks</th><th>By</th><th></th></tr></thead>
+            <thead><tr><th>Destination</th><th>Store</th><th>Order Date</th><th>Order ID(s)</th><th>Order Count</th><th>Remarks</th><th>By</th><th></th></tr></thead>
             <tbody>${fd.backlogs.map((b,i)=>`<tr>
               <td>${combo(shipTo,b.destination||code,v=>updB(code,i,'destination',v))}</td>
               <td>${combo(stores,b.store||ctry.store,v=>updB(code,i,'store',v))}</td>
               <td><input type="date" value="${escVal(b.date)}" style="width:135px;" onchange="updB('${code}',${i},'date',this.value)"></td>
+              <td><input type="text" value="${escVal(b.orderIds||'')}" placeholder="#1234, #5678" style="width:115px;" oninput="updB('${code}',${i},'orderIds',this.value)" onblur="fmtBlogIds('${code}',${i})"></td>
               <td><input type="number" value="${b.count}" placeholder="0" min="0" style="width:65px;" oninput="updB('${code}',${i},'count',this.value)"></td>
               <td>${combo(SETTINGS.blogRemarks,b.remarks||'',v=>updB(code,i,'remarks',v))}</td>
               <td class="by-cell">${b.submittedBy||S.user.name}</td>
@@ -729,10 +763,16 @@ function renderForm(code){
 function backToDash(){renderDashboard();startAutoRefresh();}
 function upd(code,sec,idx,f,v){if(S.formData[code]&&S.formData[code][sec])S.formData[code][sec][idx][f]=v;}
 function updB(code,idx,f,v){if(S.formData[code]&&S.formData[code].backlogs)S.formData[code].backlogs[idx][f]=v;}
+function fmtBlogIds(code,i){
+  const b=S.formData[code]&&S.formData[code].backlogs[i];if(!b)return;
+  const ids=(b.orderIds||'').split(/[,;\n]+/).map(s=>s.trim()).filter(Boolean);
+  const joined=ids.join(', ');
+  if(joined!==b.orderIds){b.orderIds=joined;renderForm(code);}
+}
 function addOrder(code,sec){const c=SETTINGS.countries.find(c=>c.code===code);S.formData[code][sec].push(mkEmpty(sec,code,c.store,S.user.name));renderForm(code);}
 function delOrder(code,sec,idx){S.formData[code][sec].splice(idx,1);if(!S.formData[code][sec].length){const c=SETTINGS.countries.find(c=>c.code===code);S.formData[code][sec].push(mkEmpty(sec,code,c.store,S.user.name));}renderForm(code);}
-function addBlog(code){S.formData[code].backlogs.push({destination:code,store:'',date:'',count:'',remarks:'',submittedBy:S.user.name});renderForm(code);}
-function delBlog(code,idx){S.formData[code].backlogs.splice(idx,1);if(!S.formData[code].backlogs.length)S.formData[code].backlogs.push({destination:code,store:'',date:'',count:'',remarks:'',submittedBy:S.user.name});renderForm(code);}
+function addBlog(code){S.formData[code].backlogs.push({destination:code,store:'',date:'',orderIds:'',count:'',remarks:'',submittedBy:S.user.name});renderForm(code);}
+function delBlog(code,idx){S.formData[code].backlogs.splice(idx,1);if(!S.formData[code].backlogs.length)S.formData[code].backlogs.push({destination:code,store:'',date:'',orderIds:'',count:'',remarks:'',submittedBy:S.user.name});renderForm(code);}
 
 async function submitSection(code){
   const btn=document.getElementById('submit-btn');
@@ -1061,12 +1101,13 @@ function generatePDF(){
     doc.setFillColor(...RED);doc.rect(M,y,W-M*2,8,'F');
     doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(255,255,255);
     doc.text('!! URGENT ISSUES',M+4,y+5.5);
-    // Badge — white bg, dark red text
+    // Badge — white bg, dark red text — positioned right after the heading text
     const badge=`${urgentList.length} order${urgentList.length>1?'s':''}`;
-    const bW=badge.length*1.85+5;
-    doc.setFillColor(255,255,255);doc.roundedRect(M+60,y+1.5,bW,5,1.5,1.5,'F');
+    const bW=badge.length*1.85+6;
+    const bX=M+4+doc.getTextWidth('!! URGENT ISSUES')+4;
+    doc.setFillColor(255,255,255);doc.roundedRect(bX,y+1.5,bW,5,1.5,1.5,'F');
     doc.setFont('helvetica','bold');doc.setFontSize(7);doc.setTextColor(...RED);
-    doc.text(badge,M+60+bW/2,y+5.2,{align:'center'});
+    doc.text(badge,bX+bW/2,y+5.2,{align:'center'});
     y+=9;
 
     // Content
@@ -1081,14 +1122,14 @@ function generatePDF(){
       doc.text(ctryLbl,M+5,uy);uy+=5;
       items.forEach(u=>{
         const tag=SEC_LBL[u.order.section]||u.order.section;
-        const tagW=tag.length*1.55+5;
+        const TAG_W=34; // fixed width for all section tags
         doc.setFillColor(254,226,226);doc.setDrawColor(...RED);doc.setLineWidth(0.2);
-        doc.roundedRect(M+8,uy-3.5,tagW,4.5,1,1,'FD');
+        doc.roundedRect(M+8,uy-3.5,TAG_W,4.5,1,1,'FD');
         doc.setFont('helvetica','bold');doc.setFontSize(6.5);doc.setTextColor(...RED);
-        doc.text(tag,M+10,uy);
+        doc.text(tag,M+8+TAG_W/2,uy,{align:'center'}); // centered within fixed box
         const detail=`${u.order.trackingId||'—'}${u.order.orderId?' / '+u.order.orderId:''}  —  ${u.reasons.join(', ')}`;
         doc.setFont('helvetica','normal');doc.setFontSize(7);doc.setTextColor(...DARKRED);
-        doc.text(detail,M+9+tagW,uy);
+        doc.text(detail,M+8+TAG_W+3,uy); // consistent start position for all items
         uy+=6.5;
       });
       uy+=1;
@@ -1120,15 +1161,15 @@ function generatePDF(){
   [
     {key:'pending',label:'1.  PENDING PICK UP',sub:'Orders awaiting collection for more than 1 day',
      cols:['Tracking ID','Order ID','Store','Ship To','Days','Status','Action Taken','By','!'],
-     cw:{0:46,1:26,2:22,3:14,4:12,5:24,6:90,7:18,8:17},
+     cw:{0:46,1:26,2:22,3:18,4:12,5:24,6:86,7:18,8:17},
      cs:{0:{fontStyle:'bold',fontSize:7.5},4:{halign:'right'},7:{fontStyle:'italic',textColor:[140,140,140],fontSize:7.5},8:{halign:'center',fontStyle:'bold',fontSize:9}}},
     {key:'transit',label:'2.  IN TRANSIT DELAYS',sub:'MY / SG > 5 days   |   PH / AU / US > 10 days',
      cols:['Tracking ID','Order ID','Store','Ship To','Days','Status','Action Taken','By','!'],
-     cw:{0:46,1:26,2:22,3:14,4:12,5:24,6:90,7:18,8:17},
+     cw:{0:46,1:26,2:22,3:18,4:12,5:24,6:86,7:18,8:17},
      cs:{0:{fontStyle:'bold',fontSize:7.5},4:{halign:'right'},7:{fontStyle:'italic',textColor:[140,140,140],fontSize:7.5},8:{halign:'center',fontStyle:'bold',fontSize:9}}},
     {key:'hold',label:'3.  ON HOLD / RETURNS',sub:'',
      cols:['Tracking ID','Order ID','Store','Ship To','Type','Reason','Action Taken','By','!'],
-     cw:{0:46,1:26,2:22,3:14,4:20,5:44,6:62,7:18,8:17},
+     cw:{0:46,1:26,2:22,3:18,4:20,5:44,6:58,7:18,8:17},
      cs:{0:{fontStyle:'bold',fontSize:7.5},7:{fontStyle:'italic',textColor:[140,140,140],fontSize:7.5},8:{halign:'center',fontStyle:'bold',fontSize:9}}},
   ].forEach(sec=>{
     const rows=allOrders.filter(o=>o.section===sec.key);
@@ -1143,11 +1184,11 @@ function generatePDF(){
         const urg=urgentIDs.has(o.trackingId);
         const by=o.submittedBy||'—';
         return sec.key==='hold'
-          ?[o.trackingId||'—',o.orderId||'—',o.store||'—',o.shipTo||'—',o.type||'—',o.reason||'—',o.action||'—',by,urg?'●':'']
-          :[o.trackingId||'—',o.orderId||'—',o.store||'—',o.shipTo||'—',o.days||'—',o.status||'—',o.action||'—',by,urg?'●':''];
+          ?[o.trackingId||'—',o.orderId||'—',o.store||'—',o.shipTo||'—',o.type||'—',o.reason||'—',o.action||'—',by,urg?'!':'']
+          :[o.trackingId||'—',o.orderId||'—',o.store||'—',o.shipTo||'—',o.days||'—',o.status||'—',o.action||'—',by,urg?'!':''];
       }),
       styles:{fontSize:8,cellPadding:3,overflow:'linebreak'},
-      headStyles:{fillColor:LGTEAL,textColor:TEAL,fontStyle:'bold',fontSize:8,cellPadding:3.5},
+      headStyles:{fillColor:LGTEAL,textColor:TEAL,fontStyle:'bold',fontSize:8,cellPadding:2,halign:'center'},
       alternateRowStyles:{fillColor:GREY},
       columnStyles:colStyles,
       didParseCell:d=>{
@@ -1169,11 +1210,11 @@ function generatePDF(){
     const estH=11+2+10+blogs.length*8;
     if(!fits(estH))newPage();
     drawBar('4.  ORDER BACKLOGS');
-    doc.autoTable({startY:y,head:[['Destination','Store','Order Date','Order Count','Remarks','By']],
-      body:blogs.map(b=>[b.destination||'—',b.store||'—',b.date||'—',b.count||'0',b.remarks||'—',b.submittedBy||'—']),
+    doc.autoTable({startY:y,head:[['Destination','Store','Order Date','Order ID(s)','Order Count','Remarks','By']],
+      body:blogs.map(b=>[b.destination||'—',b.store||'—',b.date||'—',b.orderIds||'—',b.count||'0',b.remarks||'—',b.submittedBy||'—']),
       styles:{fontSize:8,cellPadding:3,overflow:'linebreak'},
-      headStyles:{fillColor:LGTEAL,textColor:TEAL,fontStyle:'bold',fontSize:8,cellPadding:3.5},
-      columnStyles:{0:{cellWidth:40},1:{cellWidth:36},2:{cellWidth:30},3:{cellWidth:28,halign:'right',fontStyle:'bold'},4:{cellWidth:105},5:{cellWidth:30,fontStyle:'italic',textColor:[140,140,140],fontSize:7.5}},
+      headStyles:{fillColor:LGTEAL,textColor:TEAL,fontStyle:'bold',fontSize:8,cellPadding:2,halign:'center'},
+      columnStyles:{0:{cellWidth:36},1:{cellWidth:28},2:{cellWidth:25},3:{cellWidth:40},4:{cellWidth:20,halign:'right',fontStyle:'bold'},5:{cellWidth:96},6:{cellWidth:24,fontStyle:'italic',textColor:[140,140,140],fontSize:7.5}},
       alternateRowStyles:{fillColor:GREY},margin:{left:M,right:M},tableWidth:W-M*2});
   }
 
