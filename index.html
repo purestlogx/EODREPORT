@@ -579,7 +579,7 @@ function renderPreview(orders){
     <div class="card" style="padding:1rem;">
       <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Order Backlogs <span class="muted">(${allBlogs.length})</span></div>
       <div style="overflow-x:auto;"><table class="otbl">
-        <thead><tr><th>Destination</th><th>Store</th><th>Date</th><th>Order Count</th><th>Remarks</th></tr></thead>
+        <thead><tr><th>Destination</th><th>Store</th><th>Order Date</th><th>Order Count</th><th>Remarks</th></tr></thead>
         <tbody>${allBlogs.map(b=>`<tr>
           <td>${b.destination||'—'}</td><td>${b.store||'—'}</td>
           <td>${b.date||'—'}</td>
@@ -704,7 +704,7 @@ function renderForm(code){
         <div style="margin-bottom:1.5rem;">
           <div class="sec-hdr"><span>4 · Order Backlogs</span></div>
           <div style="overflow-x:auto;"><table class="otbl" style="min-width:500px;">
-            <thead><tr><th>Destination</th><th>Store</th><th>Date</th><th>Order Count</th><th>Remarks</th><th>By</th><th></th></tr></thead>
+            <thead><tr><th>Destination</th><th>Store</th><th>Order Date</th><th>Order Count</th><th>Remarks</th><th>By</th><th></th></tr></thead>
             <tbody>${fd.backlogs.map((b,i)=>`<tr>
               <td>${combo(shipTo,b.destination||code,v=>updB(code,i,'destination',v))}</td>
               <td>${combo(stores,b.store||ctry.store,v=>updB(code,i,'store',v))}</td>
@@ -731,7 +731,7 @@ function upd(code,sec,idx,f,v){if(S.formData[code]&&S.formData[code][sec])S.form
 function updB(code,idx,f,v){if(S.formData[code]&&S.formData[code].backlogs)S.formData[code].backlogs[idx][f]=v;}
 function addOrder(code,sec){const c=SETTINGS.countries.find(c=>c.code===code);S.formData[code][sec].push(mkEmpty(sec,code,c.store,S.user.name));renderForm(code);}
 function delOrder(code,sec,idx){S.formData[code][sec].splice(idx,1);if(!S.formData[code][sec].length){const c=SETTINGS.countries.find(c=>c.code===code);S.formData[code][sec].push(mkEmpty(sec,code,c.store,S.user.name));}renderForm(code);}
-function addBlog(code){S.formData[code].backlogs.push({destination:code,store:'',date:TODAY_ISO,count:'',remarks:'',submittedBy:S.user.name});renderForm(code);}
+function addBlog(code){S.formData[code].backlogs.push({destination:code,store:'',date:'',count:'',remarks:'',submittedBy:S.user.name});renderForm(code);}
 function delBlog(code,idx){S.formData[code].backlogs.splice(idx,1);if(!S.formData[code].backlogs.length)S.formData[code].backlogs.push({destination:code,store:'',date:'',count:'',remarks:'',submittedBy:S.user.name});renderForm(code);}
 
 async function submitSection(code){
@@ -1001,111 +1001,200 @@ function closeModal(id){const m=document.getElementById(id);if(m)m.remove();}
 function generatePDF(){
   const{jsPDF}=window.jspdf;
   const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
-  const W=297,M=16,TEAL=[0,76,79],CREAM=[253,248,242],REDBG=[254,226,226],RED=[185,28,28],GREY=[245,245,243];
-  const allOrders=Object.values(S.submissions).flat();
+  const W=297,H=210,M=14;
+  const TEAL=[0,76,79],CREAM=[253,248,242],LGTEAL=[230,240,240];
+  const GREY=[244,241,235],RED=[185,28,28],DARKRED=[127,29,29],REDBG=[254,242,242];
+  const FOOTER_H=12,MAX_Y=H-FOOTER_H-6;
+
+  // All non-backlog orders
+  const allOrders=Object.values(S.submissions).flat().filter(o=>o.section!=='backlog');
   const urgentList=detectUrgent(allOrders);
+  const urgentIDs=new Set(urgentList.map(u=>u.order.trackingId));
   let y=0;
 
-  // Header
-  doc.setFillColor(...TEAL);doc.rect(0,0,W,28,'F');
-  doc.setFont('helvetica','bold');doc.setFontSize(18);doc.setTextColor(...CREAM);
-  doc.text('DAILY LOGISTICS REPORT',M,17);
-  doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(200,230,230);
-  doc.text(`${TODAY}   -   Generated: ${new Date().toLocaleTimeString()}   -   By: ${S.user.name}`,M,24);
-  y=36;
+  // ── Page header ────────────────────────────────────────────
+  const drawHeader=(cont=false)=>{
+    doc.setFillColor(...TEAL);doc.rect(0,0,W,26,'F');
+    doc.setFont('helvetica','bold');doc.setFontSize(15);doc.setTextColor(...CREAM);
+    doc.text('DAILY LOGISTICS REPORT',M,15);
+    doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(159,191,191);
+    doc.text(`${TODAY}   ·   Generated: ${new Date().toLocaleTimeString()}   ·   By: ${S.user.name}${cont?' (cont.)':''}`,M,22);
+    y=33;
+  };
 
-  // Urgent
+  // ── New page ────────────────────────────────────────────────
+  const newPage=()=>{doc.addPage();drawHeader(true);};
+
+  // ── Fits on current page? ───────────────────────────────────
+  const fits=(h)=>y+h<=MAX_Y;
+
+  // ── Section bar ─────────────────────────────────────────────
+  const drawBar=(label,sub='')=>{
+    const bH=sub?14:9;
+    doc.setFillColor(...TEAL);doc.roundedRect(M,y,W-M*2,bH,2,2,'F');
+    doc.setFont('helvetica','bold');doc.setFontSize(10);doc.setTextColor(...CREAM);
+    doc.text(label,M+4,y+(sub?5.5:6));
+    if(sub){
+      doc.setFont('helvetica','normal');doc.setFontSize(7);
+      doc.setTextColor(125,175,175);doc.text(sub,M+4,y+11.5);
+    }
+    y+=bH+2;
+  };
+
+  drawHeader();
+
+  // ── 1. Urgent Issues ────────────────────────────────────────
   if(urgentList.length){
-    const bH=14+urgentList.length*9;
-    doc.setFillColor(...REDBG);doc.roundedRect(M,y,W-M*2,bH,3,3,'F');
-    doc.setDrawColor(...RED);doc.setLineWidth(0.5);doc.roundedRect(M,y,W-M*2,bH,3,3,'S');
-    doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(...RED);
-    doc.text(`!! URGENT ISSUES (${urgentList.length})`,M+5,y+8);y+=13;
-    doc.setFont('helvetica','normal');doc.setFontSize(9);
-    urgentList.forEach(u=>{doc.text(`- ${u.order.trackingId||'—'}${u.order.orderId?' / '+u.order.orderId:''} [${u.order.shipTo||''}] - ${u.reasons.join(' | ')}`,M+6,y+5);y+=8;});
-    y+=6;
+    const byCountry={};
+    urgentList.forEach(u=>{
+      const c=u.order.shipTo||'?';
+      if(!byCountry[c])byCountry[c]=[];
+      byCountry[c].push(u);
+    });
+    const SEC_LBL={pending:'Pending Pick Up',transit:'In Transit Delays',hold:'On Hold / Returns'};
+    let urgH=9;
+    Object.values(byCountry).forEach(items=>{urgH+=6+items.length*6.5;});
+    urgH+=4;
+    if(!fits(urgH))newPage();
+
+    // Red header bar
+    doc.setFillColor(...RED);doc.rect(M,y,W-M*2,8,'F');
+    doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(255,255,255);
+    doc.text('!! URGENT ISSUES',M+4,y+5.5);
+    // Badge — white bg, dark red text
+    const badge=`${urgentList.length} order${urgentList.length>1?'s':''}`;
+    const bW=badge.length*1.85+5;
+    doc.setFillColor(255,255,255);doc.roundedRect(M+60,y+1.5,bW,5,1.5,1.5,'F');
+    doc.setFont('helvetica','bold');doc.setFontSize(7);doc.setTextColor(...RED);
+    doc.text(badge,M+60+bW/2,y+5.2,{align:'center'});
+    y+=9;
+
+    // Content
+    doc.setFillColor(...REDBG);
+    doc.setDrawColor(...RED);doc.setLineWidth(0.3);
+    doc.rect(M,y,W-M*2,urgH-9,'FD');
+    let uy=y+4;
+    Object.entries(byCountry).forEach(([ctry,items])=>{
+      const ctryObj=SETTINGS.countries.find(c=>c.code===ctry);
+      const ctryLbl=ctryObj?`${ctryObj.label.toUpperCase()} (${ctry})`:ctry;
+      doc.setFont('helvetica','bold');doc.setFontSize(7.5);doc.setTextColor(...DARKRED);
+      doc.text(ctryLbl,M+5,uy);uy+=5;
+      items.forEach(u=>{
+        const tag=SEC_LBL[u.order.section]||u.order.section;
+        const tagW=tag.length*1.55+5;
+        doc.setFillColor(254,226,226);doc.setDrawColor(...RED);doc.setLineWidth(0.2);
+        doc.roundedRect(M+8,uy-3.5,tagW,4.5,1,1,'FD');
+        doc.setFont('helvetica','bold');doc.setFontSize(6.5);doc.setTextColor(...RED);
+        doc.text(tag,M+10,uy);
+        const detail=`${u.order.trackingId||'—'}${u.order.orderId?' / '+u.order.orderId:''}  —  ${u.reasons.join(', ')}`;
+        doc.setFont('helvetica','normal');doc.setFontSize(7);doc.setTextColor(...DARKRED);
+        doc.text(detail,M+9+tagW,uy);
+        uy+=6.5;
+      });
+      uy+=1;
+    });
+    y+=urgH-9+6;
   }
 
-  // Summary
-  if(y>170){doc.addPage();y=16;}
-  doc.setFillColor(...TEAL);doc.roundedRect(M,y,W-M*2,10,2,2,'F');
-  doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(...CREAM);
-  doc.text('SUMMARY BY COUNTRY',M+4,y+7);
-  y+=14;
+  // ── 2. Summary ──────────────────────────────────────────────
+  if(!fits(50))newPage();
+  drawBar('SUMMARY BY COUNTRY');
   doc.autoTable({startY:y,
     head:[['Country','Pending Pick Up','In Transit Delays','On Hold / Returns','Order Backlogs']],
     body:SETTINGS.countries.map(c=>{
       const co=allOrders.filter(o=>o.shipTo===c.code);
       const bl=Object.values(S.formData).flatMap(f=>f.backlogs||[]).filter(b=>b.destination===c.code);
-      return[`${c.label} (${c.code})`,co.filter(o=>o.section==='pending').length||'—',co.filter(o=>o.section==='transit').length||'—',co.filter(o=>o.section==='hold').length||'—',bl.reduce((s,b)=>s+(parseInt(b.count)||0),0)||'—'];
+      return[`${c.label} (${c.code})`,
+        co.filter(o=>o.section==='pending').length||'—',
+        co.filter(o=>o.section==='transit').length||'—',
+        co.filter(o=>o.section==='hold').length||'—',
+        bl.reduce((s,b)=>s+(parseInt(b.count)||0),0)||'—'];
     }),
-    styles:{fontSize:10,cellPadding:4,halign:'center'},
-    columnStyles:{0:{halign:'left',fontStyle:'bold'}},
-    headStyles:{fillColor:TEAL,textColor:CREAM,fontStyle:'bold',fontSize:10,cellPadding:4},
+    styles:{fontSize:9,cellPadding:3.5,overflow:'linebreak'},
+    columnStyles:{0:{halign:'left',fontStyle:'bold'},1:{halign:'center'},2:{halign:'center'},3:{halign:'center'},4:{halign:'center'}},
+    headStyles:{fillColor:TEAL,textColor:CREAM,fontStyle:'bold',fontSize:9,cellPadding:3.5},
     alternateRowStyles:{fillColor:GREY},margin:{left:M,right:M},tableWidth:W-M*2});
   y=doc.lastAutoTable.finalY+10;
 
-  // Sections
-  [{key:'pending',label:'1.  PENDING PICK UP',        sub:'> 1 day',cols:['Tracking ID','Order ID','Store','Ship To','Days','Status','Action Taken','By','Urgent']},
-   {key:'transit',label:'2.  IN TRANSIT DELAYS',       sub:'MY/SG > 5 days  |  PH/AU/US > 10 days',cols:['Tracking ID','Order ID','Store','Ship To','Delayed Days','Status','Action Taken','By','Urgent']},
-   {key:'hold',   label:'3.  ON HOLD / RETURNS',       sub:'',cols:['Tracking ID','Order ID','Store','Ship To','Type','Reason','Action Taken','By','Urgent']},
+  // ── 3. Order sections ───────────────────────────────────────
+  [
+    {key:'pending',label:'1.  PENDING PICK UP',sub:'Orders awaiting collection for more than 1 day',
+     cols:['Tracking ID','Order ID','Store','Ship To','Days','Status','Action Taken','By','!'],
+     cw:{0:46,1:26,2:22,3:14,4:12,5:24,6:90,7:18,8:17},
+     cs:{0:{fontStyle:'bold',fontSize:7.5},4:{halign:'right'},7:{fontStyle:'italic',textColor:[140,140,140],fontSize:7.5},8:{halign:'center',fontStyle:'bold',fontSize:9}}},
+    {key:'transit',label:'2.  IN TRANSIT DELAYS',sub:'MY / SG > 5 days   |   PH / AU / US > 10 days',
+     cols:['Tracking ID','Order ID','Store','Ship To','Days','Status','Action Taken','By','!'],
+     cw:{0:46,1:26,2:22,3:14,4:12,5:24,6:90,7:18,8:17},
+     cs:{0:{fontStyle:'bold',fontSize:7.5},4:{halign:'right'},7:{fontStyle:'italic',textColor:[140,140,140],fontSize:7.5},8:{halign:'center',fontStyle:'bold',fontSize:9}}},
+    {key:'hold',label:'3.  ON HOLD / RETURNS',sub:'',
+     cols:['Tracking ID','Order ID','Store','Ship To','Type','Reason','Action Taken','By','!'],
+     cw:{0:46,1:26,2:22,3:14,4:20,5:44,6:62,7:18,8:17},
+     cs:{0:{fontStyle:'bold',fontSize:7.5},7:{fontStyle:'italic',textColor:[140,140,140],fontSize:7.5},8:{halign:'center',fontStyle:'bold',fontSize:9}}},
   ].forEach(sec=>{
-    const rows=allOrders.filter(o=>o.section===sec.key);if(!rows.length)return;
-    if(y>170){doc.addPage();y=16;}
-    const bH=sec.sub?14:10;
-    doc.setFillColor(...TEAL);doc.roundedRect(M,y,W-M*2,bH,2,2,'F');
-    doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(...CREAM);
-    doc.text(sec.label,M+4,y+(sec.sub?6:7));
-    if(sec.sub){doc.setFont('helvetica','normal');doc.setFontSize(8.5);doc.setTextColor(180,220,220);doc.text(sec.sub,M+4,y+12);}
-    y+=bH+4;
+    const rows=allOrders.filter(o=>o.section===sec.key);
+    if(!rows.length)return;
+    const estH=(sec.sub?16:11)+2+10+rows.length*8;
+    if(!fits(estH))newPage();
+    drawBar(sec.label,sec.sub);
+    const colStyles={};
+    Object.entries(sec.cw).forEach(([i,w])=>{colStyles[i]={cellWidth:w,...(sec.cs[i]||{})};});
     doc.autoTable({startY:y,head:[sec.cols],
       body:rows.map(o=>{
-        const isUrg=detectUrgent([o]).length>0;const by=o.submittedBy||'—';
+        const urg=urgentIDs.has(o.trackingId);
+        const by=o.submittedBy||'—';
         return sec.key==='hold'
-          ?[o.trackingId||'—',o.orderId||'—',o.store||'—',o.shipTo||'—',o.type||'—',o.reason||'—',o.action||'—',by,isUrg?'!! YES':'']
-          :[o.trackingId||'—',o.orderId||'—',o.store||'—',o.shipTo||'—',o.days||'—',o.status||'—',o.action||'—',by,isUrg?'!! YES':''];
+          ?[o.trackingId||'—',o.orderId||'—',o.store||'—',o.shipTo||'—',o.type||'—',o.reason||'—',o.action||'—',by,urg?'●':'']
+          :[o.trackingId||'—',o.orderId||'—',o.store||'—',o.shipTo||'—',o.days||'—',o.status||'—',o.action||'—',by,urg?'●':''];
       }),
-      styles:{fontSize:9,cellPadding:3.5,overflow:'ellipsize'},
-      headStyles:{fillColor:[230,240,240],textColor:TEAL,fontStyle:'bold',fontSize:9,cellPadding:4},
+      styles:{fontSize:8,cellPadding:3,overflow:'linebreak'},
+      headStyles:{fillColor:LGTEAL,textColor:TEAL,fontStyle:'bold',fontSize:8,cellPadding:3.5},
       alternateRowStyles:{fillColor:GREY},
-      columnStyles:{0:{fontStyle:'bold',fontSize:8.5},7:{fontStyle:'italic',textColor:[100,100,100]},8:{textColor:RED,fontStyle:'bold',halign:'center'}},
-      didParseCell:d=>{if(d.section==='body'&&d.row.raw[8]==='!! YES')d.cell.styles.fillColor=REDBG;},
+      columnStyles:colStyles,
+      didParseCell:d=>{
+        if(d.section==='body'&&urgentIDs.has(d.row.raw[0])){
+          d.cell.styles.fillColor=REDBG;
+          if(d.column.index===8){d.cell.styles.textColor=RED;d.cell.styles.fontStyle='bold';}
+          if(d.column.index===4){d.cell.styles.textColor=RED;d.cell.styles.fontStyle='bold';}
+        }
+      },
       margin:{left:M,right:M},tableWidth:W-M*2});
     y=doc.lastAutoTable.finalY+10;
   });
 
-  // Backlogs
+  // ── 4. Order Backlogs ───────────────────────────────────────
   const blogs=combineBlogs(
     Object.values(S.formData).flatMap(f=>f.backlogs||[]).filter(b=>b.destination&&b.count!=='')
   );
   if(blogs.length){
-    if(y>170){doc.addPage();y=16;}
-    doc.setFillColor(...TEAL);doc.roundedRect(M,y,W-M*2,10,2,2,'F');
-    doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(...CREAM);
-    doc.text('4.  ORDER BACKLOGS',M+4,y+7);y+=14;
-    doc.autoTable({startY:y,head:[['Destination','Store','Date','Order Count','Remarks']],
-      body:blogs.map(b=>[b.destination||'—',b.store||'—',b.date||'—',b.count||'0',b.remarks||'—']),
-      styles:{fontSize:9,cellPadding:3.5},
-      headStyles:{fillColor:[230,240,240],textColor:TEAL,fontStyle:'bold',fontSize:9,cellPadding:4},
-      columnStyles:{3:{halign:'center',fontStyle:'bold'}},
+    const estH=11+2+10+blogs.length*8;
+    if(!fits(estH))newPage();
+    drawBar('4.  ORDER BACKLOGS');
+    doc.autoTable({startY:y,head:[['Destination','Store','Order Date','Order Count','Remarks','By']],
+      body:blogs.map(b=>[b.destination||'—',b.store||'—',b.date||'—',b.count||'0',b.remarks||'—',b.submittedBy||'—']),
+      styles:{fontSize:8,cellPadding:3,overflow:'linebreak'},
+      headStyles:{fillColor:LGTEAL,textColor:TEAL,fontStyle:'bold',fontSize:8,cellPadding:3.5},
+      columnStyles:{0:{cellWidth:40},1:{cellWidth:36},2:{cellWidth:30},3:{cellWidth:28,halign:'right',fontStyle:'bold'},4:{cellWidth:105},5:{cellWidth:30,fontStyle:'italic',textColor:[140,140,140],fontSize:7.5}},
       alternateRowStyles:{fillColor:GREY},margin:{left:M,right:M},tableWidth:W-M*2});
   }
 
-  // Footer
+  // ── Footers on all pages ────────────────────────────────────
   const pages=doc.internal.getNumberOfPages();
   for(let i=1;i<=pages;i++){
-    doc.setPage(i);doc.setFillColor(...TEAL);doc.rect(0,200,W,10,'F');
-    doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(...CREAM);
-    doc.text(`Purest Nest Pte Ltd   Confidential   Daily Logistics Report   ${TODAY}`,M,206);
-    doc.text(`Page ${i} of ${pages}`,W-M,206,{align:'right'});
+    doc.setPage(i);
+    doc.setFillColor(...TEAL);doc.rect(0,H-FOOTER_H,W,FOOTER_H,'F');
+    doc.setFont('helvetica','normal');doc.setFontSize(7);doc.setTextColor(...CREAM);
+    doc.text(`Purest Nest Pte Ltd   ·   Confidential   ·   Daily Logistics Report   ·   ${TODAY}`,M,H-4.5);
+    doc.text(`Page ${i} of ${pages}`,W-M,H-4.5,{align:'right'});
   }
+
   doc.save(`Logistics-Report-${TODAY.replace(/\//g,'-')}.pdf`);
   pushToSheets({action:'log_pdf',date:TODAY_ISO,timestamp:new Date().toLocaleString(),
     generatedBy:S.user.name,
     sectionsIncluded:Object.keys(S.submissions).map(c=>{const ct=SETTINGS.countries.find(x=>x.code===c);return ct?ct.label:c;}),
-    totalOrders:Object.values(S.submissions).flat().length,
+    totalOrders:allOrders.length,
   });
 }
+
 
 // ════════════════════════════════════════════════════════════
 //  INIT — restore session or show login
