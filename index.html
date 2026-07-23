@@ -6,6 +6,9 @@
 <title>Daily Logistics Report · Purest Nest</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <style>
 :root{
   --bg:#FDF8F2;--teal:#004C4F;--teal-lt:rgba(0,76,79,0.07);
@@ -177,6 +180,12 @@ const TODAY_ISO     = new Date().toISOString().slice(0,10); // YYYY-MM-DD
 const SESSION_KEY   = 'pn_session';
 const INACTIVITY_MS = 60 * 60 * 1000; // 1 hour
 
+// Firebase — auth + role lookup only. Data sync to Google Sheets (Apps Script) is unchanged.
+const firebaseConfig={apiKey:"AIzaSyDM3-Ob02qPFG0Wp67o9iWsohuw6hj3VhE",authDomain:"purest-logx-tools.firebaseapp.com",projectId:"purest-logx-tools",storageBucket:"purest-logx-tools.firebasestorage.app",messagingSenderId:"684066133614",appId:"1:684066133614:web:26c955f62ec49bb88fb87f"};
+let fbauth=null, fbdb=null;
+try{ firebase.initializeApp(firebaseConfig); fbauth=firebase.auth(); fbdb=firebase.firestore(); fbauth.setPersistence(firebase.auth.Auth.Persistence.SESSION).catch(()=>{}); }catch(e){ console.error('Firebase init failed',e); }
+function ekey(e){ return String(e||'').toLowerCase().replace(/[.#$\[\]\/]/g,'_'); }
+
 document.getElementById('nav-date').textContent = TODAY;
 
 // ════════════════════════════════════════════════════════════
@@ -198,11 +207,8 @@ const LS = {
 // ════════════════════════════════════════════════════════════
 //  ACCOUNTS & SETTINGS
 // ════════════════════════════════════════════════════════════
-let ACCOUNTS = [
-  {username:'rose',  password:'rose123',  name:'Rose',  role:'pic'},
-  {username:'alona', password:'alona123', name:'Alona', role:'pic'},
-  {username:'admin', password:'admin123', name:'Admin', role:'manager'},
-];
+// User roles live in Firestore (eod_report/users) — never in this public source.
+let USERS = {}; // emailKey -> { email, name, role }
 
 const COUNTRY_COLORS = ['#cc0001','#0038a8','#00008b','#b22234','#7c3aed','#b45309','#004C4F','#375428'];
 
@@ -344,43 +350,72 @@ function renderLogin(err) {
       <div class="login-card">
         <div class="login-logo">
           <div class="lg">Purest Nest</div>
-          <div class="sub">Daily Logistics Report</div>
+          <div class="sub">Daily Logistics Report · v2.1</div>
         </div>
         ${err?`<div class="error-msg">${err}</div>`:''}
         <div class="form-group">
-          <label class="form-label">Username</label>
-          <input class="form-input" type="text" id="lu" placeholder="Enter username" autofocus
-            onkeydown="if(event.key==='Enter')doLogin()">
+          <label class="form-label">Email</label>
+          <input class="form-input" type="email" id="lu" placeholder="you@thepurestgroup.com" autofocus autocomplete="username"
+            onkeydown="if(event.key==='Enter')document.getElementById('lp').focus()">
         </div>
         <div class="form-group">
           <label class="form-label">Password</label>
-          <input class="form-input" type="password" id="lp" placeholder="Enter password"
+          <input class="form-input" type="password" id="lp" placeholder="Enter password" autocomplete="current-password"
             onkeydown="if(event.key==='Enter')doLogin()">
         </div>
         <button class="btn btn-primary btn-full" onclick="doLogin()">Log in</button>
+        <button type="button" onclick="doPasswordReset()" style="display:block;margin:14px auto 0;background:none;border:none;color:var(--teal);font-size:12px;cursor:pointer;text-decoration:underline;">Forgot password?</button>
+        <div id="lmsg" style="font-size:12px;margin-top:12px;min-height:16px;text-align:center;"></div>
       </div>
     </div>`;
 }
 
 function doLogin() {
-  const u=(document.getElementById('lu').value||'').trim().toLowerCase();
-  const p=document.getElementById('lp').value;
-  const acct=ACCOUNTS.find(a=>a.username===u&&a.password===p);
-  if(!acct){renderLogin('Incorrect username or password.');return;}
-  applySession(acct,true);
+  const email=(document.getElementById('lu').value||'').trim();
+  const pass=document.getElementById('lp').value;
+  if(!fbauth){renderLogin('Authentication unavailable. Check your connection and reload.');return;}
+  if(!email||!pass){renderLogin('Enter your email and password.');return;}
+  fbauth.signInWithEmailAndPassword(email,pass).catch(err=>{
+    const bad=err.code&&/credential|password|user-not-found|invalid-email/.test(err.code);
+    renderLogin(bad?'Incorrect email or password.':(err.message||'Sign-in failed.'));
+  });
 }
 
-async function applySession(acct,isNew) {
-  S.user=acct;
-  document.getElementById('nav-name').textContent=acct.name;
+function doPasswordReset() {
+  const email=(document.getElementById('lu').value||'').trim();
+  const msg=document.getElementById('lmsg');
+  if(!fbauth||!msg)return;
+  if(!email){msg.style.color='';msg.textContent='Enter your email above first, then click "Forgot password?".';return;}
+  fbauth.sendPasswordResetEmail(email)
+    .then(()=>{msg.style.color='var(--teal)';msg.textContent='Reset link sent to '+email+'. Check your inbox (and spam).';})
+    .catch(err=>{msg.style.color='#c0392b';msg.textContent=(err.code==='auth/user-not-found')?'No account found for that email — ask an admin to create it first.':(err.message||'Could not send reset email.');});
+}
+
+async function loadUsersFromFirestore() {
+  USERS={};
+  if(!fbdb)return;
+  try{ const doc=await fbdb.collection('eod_report').doc('users').get(); if(doc.exists) USERS=doc.data()||{}; }catch(e){ console.warn('Role load failed:',e); }
+}
+async function saveUsersToFirestore() {
+  if(fbdb) await fbdb.collection('eod_report').doc('users').set(USERS);
+}
+function resolveUser(fbUser) {
+  const rec=USERS[ekey(fbUser.email)];
+  const isFirst=!Object.keys(USERS).length;
+  return { email:fbUser.email, name:(rec&&rec.name)||fbUser.email.split('@')[0], role:(rec&&rec.role)||(isFirst?'manager':'pic') };
+}
+
+async function applySession(fbUser) {
+  await loadUsersFromFirestore();
+  S.user=resolveUser(fbUser);
+  document.getElementById('nav-name').textContent=S.user.name;
   document.getElementById('nav-name').style.display='';
-  document.getElementById('nav-role').textContent=acct.role==='manager'?'Manager':'PIC';
+  document.getElementById('nav-role').textContent=S.user.role==='manager'?'Manager':'PIC';
   document.getElementById('nav-role').style.display='';
   document.getElementById('btn-settings').style.display='';
   document.getElementById('btn-logout').style.display='';
   document.getElementById('btn-sheet').style.display='flex';
   document.getElementById('btn-sheet').href=SHEET_URL;
-  if(isNew) LS.set(SESSION_KEY,{username:acct.username,loginTime:Date.now()});
   lastActivity=Date.now();
   showLoading('Loading data...');
   if(!DEMO_MODE){
@@ -392,12 +427,19 @@ async function applySession(acct,isNew) {
 }
 
 function logout() {
-  stopAutoRefresh();
-  LS.del(SESSION_KEY);
-  S.user=null;S.formData={};S.submissions={};
-  ['nav-name','nav-role','btn-settings','btn-logout','btn-sheet']
-    .forEach(id=>document.getElementById(id).style.display='none');
-  renderLogin();
+  if(fbauth) fbauth.signOut();
+}
+
+if(fbauth){
+  fbauth.onAuthStateChanged(user=>{
+    if(user){ applySession(user); }
+    else{
+      stopAutoRefresh();
+      S.user=null; S.formData={}; S.submissions={};
+      ['nav-name','nav-role','btn-settings','btn-logout','btn-sheet'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none';});
+      renderLogin();
+    }
+  });
 }
 
 // ════════════════════════════════════════════════════════════
@@ -476,12 +518,11 @@ async function loadSettingsFromSheets() {
     if(!res.ok)throw new Error('HTTP '+res.status);
     const data=await res.json();
     if(data.settings&&Object.keys(data.settings).length>0) SETTINGS={...SETTINGS,...data.settings};
-    if(data.accounts&&data.accounts.length>0) ACCOUNTS=data.accounts;
   } catch(e){console.warn('loadSettings failed:',e);}
 }
 
 function saveSettingsToSheets() {
-  pushToSheets({action:'save_settings',settings:SETTINGS,accounts:ACCOUNTS});
+  pushToSheets({action:'save_settings',settings:SETTINGS});
 }
 
 // ════════════════════════════════════════════════════════════
@@ -890,24 +931,25 @@ function renderSettings(){
         </div>
       </div>
 
-      <!-- USER MANAGEMENT (manager only) -->
+      <!-- USER MANAGEMENT (manager only) — roles in Firestore, not passwords -->
       ${S.user.role==='manager'?`
         <div class="settings-section">
           <div class="settings-section-title">User Management</div>
+          <p class="muted" style="font-size:11.5px;margin:0 0 10px;">Sets roles only. Login accounts are created in the Firebase console (Authentication). Adding an email here assigns that person's role before their first sign-in.</p>
           <div class="card" style="padding:0;overflow:hidden;">
             <table class="um-table">
-              <thead><tr><th>Name</th><th>Username</th><th>Role</th><th style="text-align:right;">
+              <thead><tr><th>Name</th><th>Email</th><th>Role</th><th style="text-align:right;">
                 <button class="btn btn-primary btn-sm" onclick="showUserModal()">+ Add user</button>
               </th></tr></thead>
               <tbody>
-                ${ACCOUNTS.map((a,i)=>`<tr>
-                  <td><strong>${a.name}</strong></td>
-                  <td style="font-family:monospace;font-size:12px;">${a.username}</td>
+                ${Object.entries(USERS).map(([k,a])=>`<tr>
+                  <td><strong>${escVal(a.name||'')}</strong></td>
+                  <td style="font-family:monospace;font-size:12px;">${escVal(a.email||'')}</td>
                   <td><span class="role-pill ${a.role==='manager'?'role-manager':'role-pic'}">${a.role==='manager'?'Manager':'PIC'}</span></td>
                   <td style="text-align:right;">
                     <div class="flex gap2" style="justify-content:flex-end;">
-                      <button class="btn btn-ghost btn-sm" onclick="showUserModal(${i})">Edit</button>
-                      ${a.username!==S.user.username?`<button class="btn-del" onclick="deleteUser(${i})">Delete</button>`:`<span class="muted" style="font-size:11px;">You</span>`}
+                      <button class="btn btn-ghost btn-sm" onclick="showUserModal('${k}')">Edit</button>
+                      ${a.email!==S.user.email?`<button class="btn-del" onclick="deleteUser('${k}')">Delete</button>`:`<span class="muted" style="font-size:11px;">You</span>`}
                     </div>
                   </td>
                 </tr>`).join('')}
@@ -986,23 +1028,19 @@ function removeCountry(idx){
 }
 
 // User modal
-function showUserModal(idx){
-  const isEdit=idx!==undefined&&idx!==null;
-  const a=isEdit?ACCOUNTS[idx]:{name:'',username:'',password:'',role:'pic'};
+function showUserModal(key){
+  const isEdit=key!==undefined&&key!==null&&!!USERS[key];
+  const a=isEdit?USERS[key]:{name:'',email:'',role:'pic'};
   const el=document.createElement('div');el.className='modal-overlay';el.id='um-modal';
   el.innerHTML=`<div class="modal">
-    <h3>${isEdit?'Edit User':'Add User'}</h3>
+    <h3>${isEdit?'Edit User Role':'Add User'}</h3>
     <div class="form-group" style="margin-bottom:.85rem;">
       <label class="form-label">Full Name</label>
-      <input class="form-input" id="um-name" type="text" value="${a.name}" placeholder="e.g. Rose">
+      <input class="form-input" id="um-name" type="text" value="${escVal(a.name||'')}" placeholder="e.g. Rose">
     </div>
     <div class="form-group" style="margin-bottom:.85rem;">
-      <label class="form-label">Username</label>
-      <input class="form-input" id="um-user" type="text" value="${a.username}" placeholder="e.g. rose">
-    </div>
-    <div class="form-group" style="margin-bottom:.85rem;">
-      <label class="form-label">${isEdit?'New Password (leave blank to keep)':'Password'}</label>
-      <input class="form-input" id="um-pass" type="password" placeholder="${isEdit?'Leave blank to keep':'Set password'}">
+      <label class="form-label">Email</label>
+      <input class="form-input" id="um-email" type="email" value="${escVal(a.email||'')}" placeholder="you@thepurestgroup.com" ${isEdit?'readonly':''}>
     </div>
     <div class="form-group" style="margin-bottom:.85rem;">
       <label class="form-label">Role</label>
@@ -1011,9 +1049,10 @@ function showUserModal(idx){
         <option value="manager"${a.role==='manager'?' selected':''}>Manager — Full access including Settings</option>
       </select>
     </div>
+    <p class="muted" style="font-size:11px;margin:0 0 4px;">Sets the role only. The person must have a Firebase login account (created in the console) to sign in.</p>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('um-modal')">Cancel</button>
-      <button class="btn btn-primary" onclick="saveUser(${isEdit?idx:'null'})">Save</button>
+      <button class="btn btn-primary" onclick="saveUser(${isEdit?`'${key}'`:'null'})">Save</button>
     </div>
   </div>`;
   document.body.appendChild(el);
@@ -1021,18 +1060,25 @@ function showUserModal(idx){
   document.getElementById('um-name').focus();
 }
 
-function saveUser(idx){
-  const name    =document.getElementById('um-name').value.trim();
-  const username=document.getElementById('um-user').value.trim().toLowerCase();
-  const password=document.getElementById('um-pass').value;
-  const role    =document.getElementById('um-role').value;
-  if(!name||!username){alert('Name and username are required.');return;}
-  if(ACCOUNTS.findIndex((a,i)=>a.username===username&&i!==idx)>-1){alert('Username already exists.');return;}
-  if(idx===null){if(!password){alert('Password is required for new users.');return;}ACCOUNTS.push({name,username,password,role});}
-  else{ACCOUNTS[idx]={name,username,password:password||ACCOUNTS[idx].password,role};if(S.user.username===username)S.user={...S.user,name,role};}
+async function saveUser(key){
+  const name =document.getElementById('um-name').value.trim();
+  const email=document.getElementById('um-email').value.trim().toLowerCase();
+  const role =document.getElementById('um-role').value;
+  if(!name||!email){alert('Name and email are required.');return;}
+  const k=key||ekey(email);
+  if(!key&&USERS[k]){alert('A user with this email already exists.');return;}
+  USERS[k]={email,name,role};
+  try{ await saveUsersToFirestore(); }catch(e){ alert('Could not save role: '+e.message); return; }
+  if(email===S.user.email) S.user={...S.user,name,role};
   closeModal('um-modal');renderSettings();
 }
-function deleteUser(idx){if(!confirm(`Delete "${ACCOUNTS[idx].name}"?`))return;ACCOUNTS.splice(idx,1);renderSettings();}
+async function deleteUser(key){
+  if(!USERS[key])return;
+  if(!confirm(`Remove "${USERS[key].name||USERS[key].email}"? Their Firebase login still exists; they will return as PIC if they sign in again.`))return;
+  delete USERS[key];
+  try{ await saveUsersToFirestore(); }catch(e){ alert('Could not remove: '+e.message); return; }
+  renderSettings();
+}
 function closeModal(id){const m=document.getElementById(id);if(m)m.remove();}
 
 // ════════════════════════════════════════════════════════════
@@ -1241,15 +1287,9 @@ function generatePDF(){
 //  INIT — restore session or show login
 // ════════════════════════════════════════════════════════════
 (function init(){
-  const saved=LS.get(SESSION_KEY);
-  if(saved&&saved.username&&saved.loginTime){
-    if(Date.now()-saved.loginTime<INACTIVITY_MS){
-      const acct=ACCOUNTS.find(a=>a.username===saved.username);
-      if(acct){applySession(acct,false);return;}
-    }
-    LS.del(SESSION_KEY);
-  }
-  renderLogin();
+  if(!fbauth){ renderLogin('Authentication failed to load. Check your connection and reload.'); return; }
+  showLoading('Loading…');
+  // onAuthStateChanged (registered in the AUTH section) restores the session or shows the login screen.
 })();
 </script>
 </body>
