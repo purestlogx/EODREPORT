@@ -227,6 +227,7 @@ let SETTINGS = {
   types:      ['On Hold','RTS'],
   reasons:    ['CX not answering','Wrong address','CX requested reschedule','Failed delivery attempts','Damaged parcel','Return to sender'],
   blogRemarks:['Awaiting 3PL processing','Pending courier collection','Fraud risk','Holiday backlog','Awaiting payment confirmation'],
+  oosRemarks: ['Reorder placed','Awaiting supplier ETA','Partial stock available','Supplier delay','Batch in QC','Discontinued'],
 };
 
 // ════════════════════════════════════════════════════════════
@@ -241,6 +242,10 @@ function mkEmpty(sec, code, store, by) {
   return {trackingId:'',orderId:'',store:store||'',shipTo:code,
           days:'',status:'',action:'',urgent:false,
           section:sec,type:'',reason:'',submittedBy:by||''};
+}
+function mkOOS(code, store, by) {
+  return {destination:code, store:store||'', sku:'', count:'',
+          earliestDate:'', estRestock:'', remarks:'', submittedBy:by||''};
 }
 function showLoading(msg) {
   root().innerHTML=`<div style="min-height:calc(100vh - 52px);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;">
@@ -268,6 +273,36 @@ function combineBlogs(blogs) {
     remarks: b._remarks.filter(Boolean).join(', '),
     orderIds: b._ids.filter(Boolean).join(', '),
     submittedBy: b.submittedBy||'',
+  }));
+}
+// Aggregate OOS rows by destination + store + SKU (mirrors combineBlogs):
+// sums Order Count, takes the earliest order date, joins unique restock/remarks.
+function combineOOS(rows) {
+  const map = new Map();
+  rows.forEach(o => {
+    const key = `${o.destination}||${o.store}||${o.sku}`;
+    if (!map.has(key)) {
+      map.set(key, {destination:o.destination, store:o.store, sku:o.sku,
+        submittedBy:o.submittedBy||'',
+        _count: parseInt(o.count)||0,
+        _dates: o.earliestDate?[o.earliestDate]:[],
+        _restock: o.estRestock?[o.estRestock]:[],
+        _remarks: o.remarks?[o.remarks]:[]});
+    } else {
+      const ex = map.get(key);
+      ex._count += parseInt(o.count)||0;
+      if (o.earliestDate) ex._dates.push(o.earliestDate);
+      if (o.estRestock && !ex._restock.includes(o.estRestock)) ex._restock.push(o.estRestock);
+      if (o.remarks && !ex._remarks.includes(o.remarks)) ex._remarks.push(o.remarks);
+    }
+  });
+  return [...map.values()].map(o => ({
+    destination: o.destination, store: o.store, sku: o.sku,
+    count: String(o._count),
+    earliestDate: o._dates.filter(Boolean).sort()[0] || '',  // ISO strings sort chronologically
+    estRestock: o._restock.filter(Boolean).join(', '),
+    remarks: o._remarks.filter(Boolean).join(', '),
+    submittedBy: o.submittedBy || '',
   }));
 }
 
@@ -350,7 +385,7 @@ function renderLogin(err) {
       <div class="login-card">
         <div class="login-logo">
           <div class="lg">Purest Nest</div>
-          <div class="sub">Daily Logistics Report · v2.1</div>
+          <div class="sub">Daily Logistics Report · v2.2</div>
         </div>
         ${err?`<div class="error-msg">${err}</div>`:''}
         <div class="form-group">
@@ -485,7 +520,7 @@ async function loadSubmissions() {
     S.submissions=data.submissions;
     if(S.page!=='form'){
       Object.entries(data.submissions).forEach(([code,orders])=>{
-        if(!S.formData[code])S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[]};
+        if(!S.formData[code])S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[],oos:[]};
         ['pending','transit','hold'].forEach(sec=>{
           S.formData[code][sec]=orders.filter(o=>o.section===sec);
         });
@@ -496,15 +531,17 @@ async function loadSubmissions() {
   // Backlogs — new Apps Script merges them into submissions as section:'backlog'
   if(data.submissions&&S.page!=='form'){
     Object.entries(data.submissions).forEach(([code,orders])=>{
-      if(!S.formData[code])S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[]};
+      if(!S.formData[code])S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[],oos:[]};
       const blogs=orders.filter(o=>o.section==='backlog');
       if(blogs.length) S.formData[code].backlogs=blogs;
+      const oosR=orders.filter(o=>o.section==='oos');
+      if(oosR.length) S.formData[code].oos=oosR;
     });
   }
   // Fallback: old Apps Script returns backlogs separately as data.backlogs
   if(data.backlogs&&S.page!=='form'){
     Object.entries(data.backlogs).forEach(([code,blogs])=>{
-      if(!S.formData[code])S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[]};
+      if(!S.formData[code])S.formData[code]={preparedBy:'',pending:[],transit:[],hold:[],backlogs:[],oos:[]};
       if(!S.formData[code].backlogs.length) S.formData[code].backlogs=blogs;
       if(!S.submissions[code]) S.submissions[code]=[];
     });
@@ -582,7 +619,7 @@ function renderUrgentBox(urgent){
 function _drawDashboard() {
   if(!S.user)return;
   const allOrders =Object.values(S.submissions).flat();
-  const urgent    =detectUrgent(allOrders.filter(o=>o.section!=='backlog'));
+  const urgent    =detectUrgent(allOrders.filter(o=>o.section!=='backlog'&&o.section!=='oos'));
   const submitted =Object.keys(S.submissions);
   const pending   =SETTINGS.countries.length-submitted.length;
 
@@ -663,7 +700,25 @@ function renderPreview(orders){
       </table></div>
     </div>` : '';
 
-  return orderCards + blogCard;
+  const allOOS = combineOOS(
+    Object.values(S.formData).flatMap(f=>f.oos||[]).filter(o=>o.sku&&o.count!=='')
+  );
+  const oosCard = allOOS.length ? `
+    <div class="card" style="padding:1rem;">
+      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">OOS Orders <span class="muted">(${allOOS.length})</span></div>
+      <div style="overflow-x:auto;"><table class="otbl">
+        <thead><tr><th>Destination</th><th>Store</th><th>SKU / Product</th><th>Order Count</th><th>Earliest Order Date</th><th>Est. Restock</th><th>Remarks</th></tr></thead>
+        <tbody>${allOOS.map(o=>`<tr>
+          <td>${o.destination||'—'}</td><td>${o.store||'—'}</td>
+          <td style="font-family:monospace;font-size:11px;">${o.sku||'—'}</td>
+          <td style="text-align:center;font-weight:600;">${o.count||'—'}</td>
+          <td>${o.earliestDate||'—'}</td><td>${o.estRestock||'—'}</td>
+          <td>${o.remarks||'—'}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+    </div>` : '';
+
+  return orderCards + blogCard + oosCard;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -690,7 +745,7 @@ async function selectCountry(code){
   // Sync formData from latest submissions if sections are still empty
   const freshOrders=S.submissions[code]||[];
   if(freshOrders.length>0){
-    if(!S.formData[code])S.formData[code]={preparedBy:S.user.name,pending:[],transit:[],hold:[],backlogs:[]};
+    if(!S.formData[code])S.formData[code]={preparedBy:S.user.name,pending:[],transit:[],hold:[],backlogs:[],oos:[]};
     const fd=S.formData[code];
     if(!fd.pending.some(o=>o.trackingId)&&!fd.transit.some(o=>o.trackingId)&&!fd.hold.some(o=>o.trackingId)){
       fd.pending=freshOrders.filter(o=>o.section==='pending');
@@ -698,26 +753,31 @@ async function selectCountry(code){
       fd.hold   =freshOrders.filter(o=>o.section==='hold');
       const freshBlogs=freshOrders.filter(o=>o.section==='backlog');
       if(freshBlogs.length) fd.backlogs=freshBlogs;
-      console.warn('[LOGX] synced — pending:'+fd.pending.length+' transit:'+fd.transit.length+' hold:'+fd.hold.length+' backlogs:'+freshBlogs.length);
+      const freshOOS=freshOrders.filter(o=>o.section==='oos');
+      if(freshOOS.length) fd.oos=freshOOS;
+      console.warn('[LOGX] synced — pending:'+fd.pending.length+' transit:'+fd.transit.length+' hold:'+fd.hold.length+' backlogs:'+freshBlogs.length+' oos:'+freshOOS.length);
     }
   }
 
   const fd=S.formData[code];
   if(!fd||(!fd.pending.length&&!fd.transit.length&&!fd.hold.length)){
-    // Preserve existing backlogs (e.g. country has only backlog data, no order sections)
+    // Preserve existing backlogs / OOS (e.g. country has only that data, no order sections)
     const existingBacklogs=fd&&fd.backlogs&&fd.backlogs.some(b=>b.count!=='')?fd.backlogs:null;
+    const existingOOS=fd&&fd.oos&&fd.oos.some(o=>o.sku||o.count!=='')?fd.oos:null;
     S.formData[code]={
       preparedBy:S.user.name,
       pending: [mkEmpty('pending',code,ctry.store,S.user.name)],
       transit: [mkEmpty('transit',code,ctry.store,S.user.name)],
       hold:    [mkEmpty('hold',   code,ctry.store,S.user.name)],
       backlogs:existingBacklogs||[{destination:code,store:ctry?ctry.store:'',date:'',orderIds:'',count:'',remarks:'',submittedBy:S.user.name}],
+      oos:     existingOOS||[mkOOS(code,ctry?ctry.store:'',S.user.name)],
     };
   } else {
     if(!fd.pending.length)  fd.pending  =[mkEmpty('pending',code,ctry.store,S.user.name)];
     if(!fd.transit.length)  fd.transit  =[mkEmpty('transit',code,ctry.store,S.user.name)];
     if(!fd.hold.length)     fd.hold     =[mkEmpty('hold',   code,ctry.store,S.user.name)];
     if(!fd.backlogs.length) fd.backlogs =[{destination:code,store:ctry.store,date:'',orderIds:'',count:'',remarks:'',submittedBy:S.user.name}];
+    if(!fd.oos||!fd.oos.length) fd.oos  =[mkOOS(code,ctry.store,S.user.name)];
     fd.preparedBy=S.user.name;
   }
   renderForm(code);
@@ -792,6 +852,24 @@ function renderForm(code){
           </table></div>
           <button class="btn btn-ghost btn-sm mt1" onclick="addBlog('${code}')">+ Add row</button>
         </div>
+        <div style="margin-bottom:1.5rem;">
+          <div class="sec-hdr"><span>5 · OOS Orders</span><span class="sec-note">Orders held on out-of-stock SKUs</span></div>
+          <div style="overflow-x:auto;"><table class="otbl" style="min-width:640px;">
+            <thead><tr><th>Destination</th><th>Store</th><th>SKU / Product</th><th>Order Count</th><th>Earliest Order Date</th><th>Est. Restock</th><th>Remarks</th><th>By</th><th></th></tr></thead>
+            <tbody>${(fd.oos||[]).map((o,i)=>`<tr>
+              <td>${combo(shipTo,o.destination||code,v=>updO(code,i,'destination',v))}</td>
+              <td>${combo(stores,o.store||ctry.store,v=>updO(code,i,'store',v))}</td>
+              <td><input type="text" value="${escVal(o.sku||'')}" placeholder="e.g. PN-ES-PEH-2" style="width:130px;" oninput="updO('${code}',${i},'sku',this.value)"></td>
+              <td><input type="number" value="${o.count}" placeholder="0" min="0" style="width:65px;" oninput="updO('${code}',${i},'count',this.value)"></td>
+              <td><input type="date" value="${escVal(o.earliestDate||'')}" style="width:135px;" onchange="updO('${code}',${i},'earliestDate',this.value)"></td>
+              <td><input type="text" value="${escVal(o.estRestock||'')}" placeholder="YYYY-MM-DD or TBC" style="width:130px;" oninput="updO('${code}',${i},'estRestock',this.value)"></td>
+              <td>${combo(SETTINGS.oosRemarks,o.remarks||'',v=>updO(code,i,'remarks',v))}</td>
+              <td class="by-cell">${o.submittedBy||S.user.name}</td>
+              <td><button class="btn-del" onclick="delOOS('${code}',${i})">X</button></td>
+            </tr>`).join('')}</tbody>
+          </table></div>
+          <button class="btn btn-ghost btn-sm mt1" onclick="addOOS('${code}')">+ Add row</button>
+        </div>
         <hr class="divider">
         <div class="flex gap2">
           <button class="btn btn-primary" id="submit-btn" onclick="submitSection('${code}')">Submit section</button>
@@ -814,6 +892,9 @@ function addOrder(code,sec){const c=SETTINGS.countries.find(c=>c.code===code);S.
 function delOrder(code,sec,idx){S.formData[code][sec].splice(idx,1);if(!S.formData[code][sec].length){const c=SETTINGS.countries.find(c=>c.code===code);S.formData[code][sec].push(mkEmpty(sec,code,c.store,S.user.name));}renderForm(code);}
 function addBlog(code){const _ct=SETTINGS.countries.find(c=>c.code===code);S.formData[code].backlogs.push({destination:code,store:_ct?_ct.store:'',date:'',orderIds:'',count:'',remarks:'',submittedBy:S.user.name});renderForm(code);}
 function delBlog(code,idx){S.formData[code].backlogs.splice(idx,1);if(!S.formData[code].backlogs.length){const _ct2=SETTINGS.countries.find(c=>c.code===code);S.formData[code].backlogs.push({destination:code,store:_ct2?_ct2.store:'',date:'',orderIds:'',count:'',remarks:'',submittedBy:S.user.name});}renderForm(code);}
+function updO(code,idx,f,v){if(S.formData[code]&&S.formData[code].oos)S.formData[code].oos[idx][f]=v;}
+function addOOS(code){const _ct=SETTINGS.countries.find(c=>c.code===code);S.formData[code].oos.push(mkOOS(code,_ct?_ct.store:'',S.user.name));renderForm(code);}
+function delOOS(code,idx){S.formData[code].oos.splice(idx,1);if(!S.formData[code].oos.length){const _ct=SETTINGS.countries.find(c=>c.code===code);S.formData[code].oos.push(mkOOS(code,_ct?_ct.store:'',S.user.name));}renderForm(code);}
 
 async function submitSection(code){
   const btn=document.getElementById('submit-btn');
@@ -826,6 +907,7 @@ async function submitSection(code){
   pushToSheets({action:'submit',date:TODAY_ISO,country:code,
     preparedBy:S.user.name,orders,
     backlogs:fd.backlogs.filter(b=>b.count!==''),
+    oos:(fd.oos||[]).filter(o=>(o.sku||'').trim()&&o.count!==''),
   });
 
   // Poll GET every 1.5s until Sheets confirms the write (max 12s)
@@ -857,6 +939,7 @@ const DL_DEFS = [
   {key:'actions',    label:'Action Taken',             hint:'Options in the Action Taken field'},
   {key:'reasons',    label:'On Hold / Return Reasons', hint:'Reason field in On Hold & Returns'},
   {key:'blogRemarks',label:'Backlog Remarks',          hint:'Remarks field in Order Backlogs'},
+  {key:'oosRemarks', label:'OOS Remarks',              hint:'Remarks field in OOS Orders'},
   {key:'statuses',   label:'In Transit Statuses',      hint:'Status options for transit & hold sections'},
   {key:'puStatuses', label:'Pick Up Statuses',         hint:'Status options for Pending Pick Up'},
   {key:'types',      label:'Return Types',             hint:'Type field in On Hold & Returns'},
@@ -1187,18 +1270,20 @@ function generatePDF(){
   if(!fits(50))newPage();
   drawBar('SUMMARY BY COUNTRY');
   doc.autoTable({startY:y,
-    head:[['Country','Pending Pick Up','In Transit Delays','On Hold / Returns','Order Backlogs']],
+    head:[['Country','Pending Pick Up','In Transit Delays','On Hold / Returns','OOS Orders','Order Backlogs']],
     body:SETTINGS.countries.map(c=>{
       const co=allOrders.filter(o=>o.shipTo===c.code);
       const bl=Object.values(S.formData).flatMap(f=>f.backlogs||[]).filter(b=>b.destination===c.code);
+      const oo=Object.values(S.formData).flatMap(f=>f.oos||[]).filter(o=>o.destination===c.code);
       return[`${c.label} (${c.code})`,
         co.filter(o=>o.section==='pending').length||'—',
         co.filter(o=>o.section==='transit').length||'—',
         co.filter(o=>o.section==='hold').length||'—',
+        oo.reduce((s,o)=>s+(parseInt(o.count)||0),0)||'—',
         bl.reduce((s,b)=>s+(parseInt(b.count)||0),0)||'—'];
     }),
     styles:{fontSize:9,cellPadding:3.5,overflow:'linebreak'},
-    columnStyles:{0:{halign:'left',fontStyle:'bold'},1:{halign:'center'},2:{halign:'center'},3:{halign:'center'},4:{halign:'center'}},
+    columnStyles:{0:{halign:'left',fontStyle:'bold'},1:{halign:'center'},2:{halign:'center'},3:{halign:'center'},4:{halign:'center'},5:{halign:'center'}},
     headStyles:{fillColor:TEAL,textColor:CREAM,fontStyle:'bold',fontSize:9,cellPadding:3.5},
     alternateRowStyles:{fillColor:GREY},margin:{left:M,right:M},tableWidth:W-M*2});
   y=doc.lastAutoTable.finalY+10;
@@ -1261,6 +1346,23 @@ function generatePDF(){
       styles:{fontSize:8,cellPadding:3,overflow:'linebreak'},
       headStyles:{fillColor:LGTEAL,textColor:TEAL,fontStyle:'bold',fontSize:8,cellPadding:2,halign:'center'},
       columnStyles:{0:{cellWidth:36},1:{cellWidth:28},2:{cellWidth:25},3:{cellWidth:40},4:{cellWidth:20,halign:'right',fontStyle:'bold'},5:{cellWidth:96},6:{cellWidth:24,fontStyle:'italic',textColor:[140,140,140],fontSize:7.5}},
+      alternateRowStyles:{fillColor:GREY},margin:{left:M,right:M},tableWidth:W-M*2});
+    y=doc.lastAutoTable.finalY+10;
+  }
+
+  // ── 5. OOS Orders ───────────────────────────────────────────
+  const oosList=combineOOS(
+    Object.values(S.formData).flatMap(f=>f.oos||[]).filter(o=>o.sku&&o.count!=='')
+  );
+  if(oosList.length){
+    const estH=11+2+10+oosList.length*8;
+    if(!fits(estH))newPage();
+    drawBar('5.  OOS ORDERS');
+    doc.autoTable({startY:y,head:[['Destination','Store','SKU / Product','Order Count','Earliest Order Date','Est. Restock','Remarks','By']],
+      body:oosList.map(o=>[o.destination||'—',o.store||'—',o.sku||'—',o.count||'0',o.earliestDate||'—',o.estRestock||'—',o.remarks||'—',o.submittedBy||'—']),
+      styles:{fontSize:8,cellPadding:3,overflow:'linebreak'},
+      headStyles:{fillColor:LGTEAL,textColor:TEAL,fontStyle:'bold',fontSize:8,cellPadding:2,halign:'center'},
+      columnStyles:{0:{cellWidth:30},1:{cellWidth:28},2:{cellWidth:40},3:{cellWidth:20,halign:'right',fontStyle:'bold'},4:{cellWidth:32},5:{cellWidth:28},6:{cellWidth:67},7:{cellWidth:24,fontStyle:'italic',textColor:[140,140,140],fontSize:7.5}},
       alternateRowStyles:{fillColor:GREY},margin:{left:M,right:M},tableWidth:W-M*2});
   }
 
